@@ -200,7 +200,14 @@ function Footer(v: View) {
     <Box key="footer" flexDirection="column">
       {rule}
       <Box flexDirection="row" gap={2} flexWrap="wrap">
-        <Select key="view" label="view" value={v.ui.tab} options={VIEWS.map(x => ({ value: x.value, label: x.label }))} onSelect={(value: string) => v.actions.tab(value as WatchTab)} />
+        <Select
+          key="view"
+          label="view"
+          value={v.ui.tab}
+          // The menu must list what it shows: in a replay, so "dashboard" is a real change.
+          options={[...VIEWS.map(x => ({ value: x.value, label: x.label })), ...(v.ui.tab === 'replay' ? [{ value: 'replay', label: 'turn replay' }] : [])]}
+          onSelect={(value: string) => v.actions.tab(value as WatchTab)}
+        />
         <Select
           key="filter"
           label="history"

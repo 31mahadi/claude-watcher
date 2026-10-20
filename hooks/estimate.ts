@@ -28,6 +28,24 @@ export function record(history: number[] | undefined, durationMs: number, size: 
   return [...(history ?? []), Math.round(durationMs)].slice(-Math.max(1, size))
 }
 
+// Add a sample under `key` and keep the store bounded: the key moves to the end
+// (most recent), and the oldest keys beyond `maxKeys` are dropped.
+export function remember(
+  history: Record<string, number[]>,
+  key: string,
+  durationMs: number,
+  size: number,
+  maxKeys: number,
+): Record<string, number[]> {
+  const { [key]: previous, ...rest } = history
+  const keys = Object.keys(rest)
+  const keep = keys.slice(Math.max(0, keys.length - (maxKeys - 1)))
+  const out: Record<string, number[]> = {}
+  for (const k of keep) out[k] = rest[k]!
+  out[key] = record(previous, durationMs, size)
+  return out
+}
+
 export function median(values: readonly number[]): number {
   if (values.length === 0) return 0
   const sorted = [...values].sort((a, b) => a - b)

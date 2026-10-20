@@ -74,10 +74,11 @@ export function planEta(s: WatchSnapshot): { done: number; total: number; remain
 }
 
 // One-line summary for the spinner suffix and the sessions board.
-export function summary(v: Pick<View, 's' | 'history' | 'now'> & { cfg: WatchConfig }): string {
+// `short` drops the command and elapsed time, which Claude Code's own spinner already shows.
+export function summary(v: Pick<View, 's' | 'history' | 'now'> & { cfg: WatchConfig; short?: boolean }): string {
   const { s, cfg, now } = v
   const parts: string[] = []
-  if (s.current) parts.push(s.current.label, time(now - s.current.startedAt, cfg.timeFormat))
+  if (s.current && !v.short) parts.push(s.current.label, time(now - s.current.startedAt, cfg.timeFormat))
   const eta = etaText(currentEta(s, v.history, cfg, now), cfg)
   if (eta) parts.push(eta)
   const p = planEta(s)

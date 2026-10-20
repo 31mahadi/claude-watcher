@@ -39,6 +39,8 @@ export const DEFAULTS: WatchConfig = {
     toast: true,
     desktopNotify: 'whenUnfocused',
     notifyOnTurnEndAfterSeconds: 300,
+    // Toast + desktop notification only when a wait lasts this long; the band shows at once.
+    delaySeconds: 15,
     sound: false,
   },
   sessions: {

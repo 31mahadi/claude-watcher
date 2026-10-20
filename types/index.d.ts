@@ -147,6 +147,7 @@ export type WatchConfig = {
     toast: boolean
     desktopNotify: 'always' | 'whenUnfocused' | 'never'
     notifyOnTurnEndAfterSeconds: number
+    delaySeconds: number
     sound: boolean
   }
   sessions: {

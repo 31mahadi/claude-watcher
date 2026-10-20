@@ -3,7 +3,7 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { WatchCall, WatchNeedsYou, WatchPeer, WatchSnapshot, WatchTab, WatchUi } from '../types'
 import { DEFAULTS, deepMergeRaw, getPath, mergeConfig, parseValue, patchFor } from './config'
-import { normalizeKey, record } from './estimate'
+import { normalizeKey, remember } from './estimate'
 import { parseDuration, time, toolLabel } from './format'
 import { classifyCommand, parseGitStatus, parseTestOutput } from './health'
 import { needsYouText, Pane, summary, TABS, type View } from './render/pane'
@@ -100,7 +100,15 @@ async function readPeers($: $, now: number): Promise<WatchPeer[]> {
 // session.start runs again to restart what is needed.
 let stopTick: Timer | undefined
 let stopBeat: Timer | undefined
-let cancelAutoOpen: Timer | undefined
+// Per-module bookkeeping; a reload resets it, which at worst repeats one alert.
+let notifiedFor = 0
+let autoOpenedFor = 0
+let lastBeatJson = ''
+let lastBeatWrite = 0
+const BEAT_REFRESH_MS = 5000
+const HISTORY_KEYS = 300
+// Calls that waited on a permission prompt: their duration is not a run time.
+const waitedCalls = new Set<string>()
 
 async function guard(what: string, $: $, fn: () => Promise<unknown>) {
   try {
@@ -126,7 +134,28 @@ async function tickOnce($: $) {
     await update($, peers, () => list)
   }
   const active = s.turnStartedAt !== null && s.turnEndedAt === null
-  if (!active && !open && !cfg.idleTimer) stopTicker()
+  const now = await $.clock.now()
+  const waiting = s.health.needsYou
+  if (waiting && notifiedFor !== waiting.since && now - waiting.since >= cfg.attention.delaySeconds * 1000) {
+    notifiedFor = waiting.since
+    await alert($, needsYouText(s, now), true)
+  }
+  if (
+    active &&
+    !open &&
+    cfg.autoOpen === 'onLongTurn' &&
+    s.turnStartedAt !== null &&
+    autoOpenedFor !== s.turnStartedAt &&
+    now - s.turnStartedAt >= cfg.longTurnSeconds * 1000
+  ) {
+    autoOpenedFor = s.turnStartedAt
+    const opened = await openPane($)
+    if (!opened.isPlaced && !(await $.store.get('hintedNarrow'))) {
+      await $.store.set('hintedNarrow', true)
+      $.ui.toast('Claude Watcher: the terminal is too narrow to dock the pane. Type /watch to open it.')
+    }
+  }
+  if (!active && !open && !waiting && !cfg.idleTimer) stopTicker()
 }
 
 // One 1s timer, created in session.start: timers started inside a short
@@ -155,7 +184,14 @@ async function beat($: $, endedAt?: number) {
   const s = await read($, snap)
   const now = await $.clock.now()
   const history = await read($, estimates)
-  await writeBeat($, heartbeatOf(s, now, summary({ s, cfg, history, now }) || undefined, endedAt))
+  const peer = heartbeatOf(s, now, summary({ s, cfg, history, now }) || undefined, endedAt)
+  // Write on change, and every few seconds so readers can tell the session is alive.
+  const { beatAt: _beatAt, ...body } = peer
+  const json = JSON.stringify(body)
+  if (!endedAt && json === lastBeatJson && now - lastBeatWrite < BEAT_REFRESH_MS) return
+  lastBeatJson = json
+  lastBeatWrite = now
+  await writeBeat($, peer)
 }
 
 async function startBeat($: $) {
@@ -192,7 +228,14 @@ async function setNeedsYou($: $, needsYou: WatchNeedsYou) {
     phase: needsYou.kind === 'permission' ? 'waiting_permission' : needsYou.kind === 'question' ? 'waiting_question' : s.phase,
     health: { ...s.health, needsYou },
   }))
-  await alert($, needsYouText(await read($, snap), needsYou.since), true)
+  const s = await read($, snap)
+  if (needsYou.kind === 'permission' && s.current) waitedCalls.add(s.current.id)
+  // The band shows at once; the toast and notification wait for attention.delaySeconds (see tickOnce).
+  if ((await read($, config)).attention.delaySeconds <= 0) {
+    notifiedFor = needsYou.since
+    await alert($, needsYouText(s, needsYou.since), true)
+  }
+  startTicker($)
   await beat($)
 }
 
@@ -272,23 +315,8 @@ export const register: Register = on => {
       const cfg = await read($, config)
       startTicker($)
       await startBeat($)
-      cancelAutoOpen?.cancel()
-      cancelAutoOpen = undefined
-      if (cfg.autoOpen === 'always') {
-        await openPane($)
-      } else if (cfg.autoOpen === 'onLongTurn') {
-        cancelAutoOpen = $.clock.after(cfg.longTurnSeconds * 1000, () => {
-          void (async () => {
-            const s = await read($, snap)
-            if (s.turnEndedAt !== null || (await isPaneOpen($))) return
-            const opened = await openPane($)
-            if (!opened.isPlaced && !(await $.store.get('hintedNarrow'))) {
-              await $.store.set('hintedNarrow', true)
-              $.ui.toast('Claude Watcher: the terminal is too narrow to dock the pane. Type /watch to open it.')
-            }
-          })().catch(() => undefined)
-        })
-      }
+      // `onLongTurn` is handled by the 1s ticker.
+      if (cfg.autoOpen === 'always') await openPane($)
       await refreshGit($).catch(() => undefined)
     })
     return next(e)
@@ -297,8 +325,6 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId) return next(e)
     await guard('turn complete', $, async () => {
-      cancelAutoOpen?.cancel()
-      cancelAutoOpen = undefined
       const now = await $.clock.now()
       const failed = e.reason === 'error'
       await update($, snap, s => S.endTurn(s, now, failed))
@@ -333,7 +359,7 @@ export const register: Register = on => {
       }
       const started = call
       await update($, snap, x => S.startCall(x, started))
-      if (e.tool === 'AskUserQuestion') await alert($, 'Claude asked you a question', true)
+      if (e.tool === 'AskUserQuestion') startTicker($)
     })
     const ran = await next(e)
     await guard('tool end', $, async () => {
@@ -377,7 +403,10 @@ export const register: Register = on => {
       })
       if (call.key && ok && cfg.estimate.enabled) {
         const key = call.key
-        await update($, estimates, h => ({ ...h, [key]: record(h[key], durationMs, cfg.estimate.historySize) }))
+        if (!waitedCalls.has(call.id)) {
+          await update($, estimates, h => remember(h, key, durationMs, cfg.estimate.historySize, HISTORY_KEYS))
+        }
+        waitedCalls.delete(call.id)
       }
     })
     return ran
@@ -591,7 +620,7 @@ export const register: Register = on => {
     // Subscribe to the tick so elapsed time advances.
     await read($, ui)
     const now = await $.clock.now()
-    const line = summary({ s, cfg, history: await read($, estimates), now })
+    const line = summary({ s, cfg, history: await read($, estimates), now, short: true })
     if (!line) return next(e)
     const suffix = e.props.suffix ? `${e.props.suffix} · ${line}` : line
     return next({ ...e, props: { ...e.props, suffix } })

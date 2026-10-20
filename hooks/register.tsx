@@ -135,6 +135,10 @@ async function tickOnce($: $) {
   }
   const active = s.turnStartedAt !== null && s.turnEndedAt === null
   const now = await $.clock.now()
+  const listed = await $.agent.list().catch(() => [])
+  const seen = listed.map(a => ({ id: a.id, label: a.description || a.name || a.type, status: a.status }))
+  if (seen.length) await update($, snap, x => S.syncAgents(x, seen, now))
+  const agentsRunning = seen.some(a => a.status === 'running' || a.status === 'pending' || a.status === 'waiting')
   const waiting = s.health.needsYou
   if (waiting && notifiedFor !== waiting.since && now - waiting.since >= cfg.attention.delaySeconds * 1000) {
     notifiedFor = waiting.since
@@ -155,7 +159,7 @@ async function tickOnce($: $) {
       $.ui.toast('Claude Watcher: the terminal is too narrow to dock the pane. Type /watch to open it.')
     }
   }
-  if (!active && !open && !waiting && !cfg.idleTimer) stopTicker()
+  if (!active && !open && !waiting && !agentsRunning && !cfg.idleTimer) stopTicker()
 }
 
 // One 1s timer, created in session.start: timers started inside a short
@@ -363,7 +367,7 @@ export const register: Register = on => {
         const todos = input.todos as S.Todo[]
         await update($, snap, x => S.syncTodos(x, todos, now))
       }
-      if (e.tool === 'AskUserQuestion') startTicker($)
+      if (e.tool === 'AskUserQuestion' || e.tool === 'Agent') startTicker($)
     })
     const ran = await next(e)
     await guard('tool end', $, async () => {

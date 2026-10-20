@@ -23,7 +23,8 @@ export type View = {
 // 'turn' is the adaptive dashboard; the others are detail views reached by /watch <tab>.
 export const TABS: readonly WatchTab[] = ['turn', 'plan', 'agents', 'sessions', 'health', 'config']
 
-const COMPACT_BELOW = 60
+// The VS Code side panel is ~45-55 columns; only truly tiny panes go compact.
+const COMPACT_BELOW = 36
 
 const PHASE_LABEL: Record<WatchSnapshot['phase'], string> = {
   idle: 'Idle',

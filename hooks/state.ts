@@ -133,6 +133,31 @@ export function agentStart(s: WatchSnapshot, id: string, type: string, now: numb
   return { ...s, agents: [...rest, { id, type, phase: 'running' as const, startedAt: now, toolCalls: 0 }].slice(-20) }
 }
 
+export type AgentSeen = { id: string; label: string; status: string }
+
+// Merge the engine's agent list (polled each tick). Classic Subagent events can be
+// passed by before this mod's hooks run, so the list is the reliable source.
+export function syncAgents(s: WatchSnapshot, seen: readonly AgentSeen[], now: number): WatchSnapshot {
+  const phaseOf = (status: string): WatchSnapshot['agents'][number]['phase'] =>
+    status === 'completed' ? 'done' : status === 'failed' || status === 'killed' ? 'failed' : status === 'idle' ? 'idle' : 'running'
+  let agents = s.agents
+  let changed = false
+  for (const a of seen) {
+    const phase = phaseOf(a.status)
+    const known = agents.find(x => x.id === a.id)
+    if (!known) {
+      if (phase !== 'running') continue // finished before we saw it run; nothing to show
+      agents = [...agents, { id: a.id, type: a.label, phase, startedAt: now, toolCalls: 0 }]
+      changed = true
+    } else if (known.phase !== phase || known.type !== a.label) {
+      const ended = phase === 'running' ? undefined : (known.endedAt ?? now)
+      agents = agents.map(x => (x.id === a.id ? { ...x, type: a.label, phase, endedAt: ended, current: ended ? undefined : x.current } : x))
+      changed = true
+    }
+  }
+  return changed ? { ...s, agents: agents.slice(-20) } : s
+}
+
 export function agentStop(s: WatchSnapshot, id: string, phase: 'done' | 'failed' | 'idle', now: number): WatchSnapshot {
   return { ...s, agents: s.agents.map(a => (a.id === id ? { ...a, phase, endedAt: now, current: undefined } : a)) }
 }

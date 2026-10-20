@@ -1,6 +1,6 @@
 // The session's history: one entry per turn, plus session events between turns. Pure; no `$`.
 
-import type { WatchCall, WatchHistoryEntry, WatchHistoryEvent, WatchHistoryTurn, WatchTestResult } from '../types'
+import type { WatchCall, WatchHistoryEntry, WatchHistoryEvent, WatchHistoryTurn, WatchTestResult, WatchTurnSnapshot } from '../types'
 
 export const MAX_TURNS = 20
 export const MAX_CALLS = 40
@@ -99,4 +99,8 @@ export function lastCompactIndex(h: History): number {
   }
   if (at < 0) return 0
   return h.slice(0, at).filter(e => e.kind === 'turn' && e.ended).length
+}
+
+export function setSnapshot(h: History, snapshot: WatchTurnSnapshot): WatchHistoryEntry[] {
+  return onOpenTurn(h, t => ({ ...t, snapshot }))
 }

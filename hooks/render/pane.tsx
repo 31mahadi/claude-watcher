@@ -28,6 +28,7 @@ export type View = {
     clearHistory: () => void
     dismissPlan: () => void
     pick: (value: string) => void
+    turnPick: (value: string) => void
     filter: (value: string) => void
   }
 }
@@ -141,6 +142,8 @@ export function Pane(v: View) {
               ? ChecksDetail(v)
               : v.ui.tab === 'changes'
                 ? ChangesDetail(v)
+                : v.ui.tab === 'replay'
+                ? ReplayView(v)
                 : v.ui.tab === 'sessions'
                   ? SessionsDetail(v)
                   : v.ui.tab === 'health'
@@ -246,7 +249,7 @@ const STEP_COLOR = { doneMark: '#3fb950', done: '#7ee2a0', run: '#79c0ff', runBa
 const STEPS_SHOWN = 12
 
 // Steps in execution order, one line each. Past STEPS_SHOWN, done steps fold into one line.
-function StepList(v: View, plan: WatchPlan): unknown[] {
+function StepList(v: View, plan: WatchPlan, live = true): unknown[] {
   const { k, s, now } = v
   const { Box, Text } = k.els
   const steps = plan.steps
@@ -281,7 +284,7 @@ function StepList(v: View, plan: WatchPlan): unknown[] {
         <Text dimColor>{dur}</Text>
       </Box>,
     )
-    if (running && isActive(s)) {
+    if (live && running && isActive(s)) {
       const call = s.current ? `${s.current.label} ${span(now - s.current.startedAt)}` : 'thinking'
       rows.push(
         <Text key="step-live" color={TINT.teal.fg} wrap="truncate-end">
@@ -409,37 +412,121 @@ function SignalChips(v: View) {
   )
 }
 
-// HISTORY block glance: a turn strip and the last three turns.
+// HISTORY block glance: a turn strip, then turns newest first (10, more on request),
+// each with start → end and length; the history filter applies.
+function turnTimes(t: WatchHistoryTurn): string {
+  return `${clock(t.at)} → ${t.ended && !t.interrupted ? clock(t.at + (t.durationMs ?? 0)) : t.ended ? '?' : 'now'}`
+}
+
 function HistoryGlance(v: View) {
   const { k, s } = v
-  const { Box, Text } = k.els
+  const { Box, Text, Select } = k.els
   const cfg = k.cfg
-  const turns = (s.history ?? []).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
-  if (turns.length === 0) return null
-  const ended = turns.filter(t => t.ended).slice(-30)
+  const all = (s.history ?? []).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
+  if (all.length === 0) return null
+  const filter = v.ui.historyFilter ?? 'all'
+  const turns = filterHistory(all, filter).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
+  const limit = v.ui.historyLimit ?? 10
+  const shown = turns.slice().reverse().slice(0, limit)
+  const number = new Map(all.map((t, i) => [t.id, i + 1]))
+  const ended = all.filter(t => t.ended).slice(-30)
   const strip = TurnStrip(
     k,
     'turn-strip',
     ended.map(t => ({ ms: t.durationMs ?? 0, sem: isProblem(t) ? 'attention' : 'ok' })),
   )
-  const rows = turns.slice(-3).reverse().map(t => (
+  const rows = shown.map(t => (
     <Box key={`row-${t.id}`} flexDirection="row" gap={1}>
-      <Text dimColor>{clock(t.at)}</Text>
+      <Text dimColor>{turnTimes(t)}</Text>
       {Mark(k, !t.ended ? '▶' : isProblem(t) ? '✗' : '✓', !t.ended ? 'accent' : isProblem(t) ? 'attention' : 'ok')}
-      <Text wrap="truncate-end">{fit(k, t.title || '(no prompt)', inner(k) - 18)}</Text>
+      <Box flexGrow={1} flexShrink={1}>
+        <Text wrap="truncate-end">{fit(k, t.title || '(no prompt)', inner(k) - 26)}</Text>
+      </Box>
       <Text dimColor>{t.interrupted ? 'interrupted' : t.ended ? time(t.durationMs ?? 0, 'human') : 'running'}</Text>
     </Box>
   ))
+  const more = turns.length > shown.length
+  const picker = Select ? (
+    <Select
+      key="turn-pick"
+      label="turn"
+      value=""
+      options={[
+        { value: '', label: 'open turn…' },
+        ...shown.map(t => ({ value: t.id, label: `Turn ${number.get(t.id)} · ${t.title.slice(0, 40)}` })),
+        ...(more ? [{ value: 'more', label: `show 10 more (${turns.length - shown.length} older)` }] : []),
+      ]}
+      onSelect={(value: string) => v.actions.turnPick(value)}
+    />
+  ) : null
   return (
     <Box key="history" flexDirection="column">
-      <Box flexDirection="row" gap={2} alignItems="center">
+      <Box flexDirection="row" gap={2} alignItems="center" flexWrap="wrap">
         <Text dimColor bold>TURNS</Text>
         {strip}
         <Text dimColor>bar height = turn length · red = problem</Text>
+        {picker}
       </Box>
       {rows}
+      {rows.length === 0 ? <Text dimColor>{filter === 'problems' ? 'No problem turns.' : 'Nothing yet.'}</Text> : null}
+      {more && !Select ? <Text dimColor>{`+${turns.length - shown.length} older · /watch history`}</Text> : null}
     </Box>
   )
+}
+
+// A past turn, drawn like the dashboard was when it ended.
+function ReplayView(v: View) {
+  const { k, s } = v
+  const { Box, Text } = k.els
+  const all = (s.history ?? []).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
+  const t = all.find(x => x.id === v.ui.replay)
+  if (!t) return Section(k, 'turn', 'TURN', [<Text dimColor>That turn is no longer in history.</Text>])
+  const n = all.indexOf(t) + 1
+  const out: unknown[] = [
+    Section(k, 'turn', 'TURN', [
+      <Box key="replay-head" flexDirection="row" justifyContent="space-between" gap={1}>
+        <Text bold wrap="truncate-end">{`Turn ${n} · ${t.title || '(no prompt)'}`}</Text>
+        <Text dimColor>{`${turnTimes(t)} · ${t.interrupted ? 'interrupted' : time(t.durationMs ?? 0, 'human')}`}</Text>
+      </Box>,
+    ]),
+  ]
+  const snap = t.snapshot
+  if (snap?.plan) {
+    const steps = snap.plan.steps.map((x, i) => ({
+      id: `r${i}`,
+      title: x.title,
+      status: x.status as WatchPlanStep['status'],
+      calls: 0,
+      editedFiles: [],
+      agentIds: [],
+      startedAt: x.ms !== undefined ? 0 : undefined,
+      endedAt: x.ms,
+    }))
+    const plan: WatchPlan = { source: 'file', title: snap.plan.title, ticket: snap.plan.ticket, steps, startedAt: 0 }
+    const p = planProgress(plan)
+    out.push(
+      Section(k, 'plan', 'PLAN', [
+        <Box key="goal" flexDirection="row" justifyContent="space-between" gap={1}>
+          <Text bold wrap="truncate-end">{snap.plan.title}</Text>
+          <Text dimColor>{p.done === p.total ? `all ${p.total} steps done` : `step ${Math.min(p.total, p.done + 1)} of ${p.total}`}</Text>
+        </Box>,
+        Segments(k, 'replay-segments', steps.map(x => stepSem(x.status))),
+        ...StepList(v, plan, false),
+      ]),
+    )
+  }
+  const chips: unknown[] = []
+  if (snap?.tests?.length) chips.push(Badge(k, snap.tests[snap.tests.length - 1] ? 'ok' : 'attention', 'tests', snap.tests.map(ok => <Text color={ok ? TINT.ok.fg : TINT.attention.fg}>{ok ? '✓' : '✗'}</Text>)))
+  if (snap?.changes) chips.push(Badge(k, snap.changes.files ? 'violet' : 'slate', 'files changed', snap.changes.files ? `+${snap.changes.added} −${snap.changes.removed}` : 'none'))
+  if (snap?.contextPct !== undefined) chips.push(Badge(k, snap.contextPct >= 90 ? 'attention' : snap.contextPct >= k.cfg.health.contextWarnPct ? 'warn' : 'teal', 'context', pct(snap.contextPct)))
+  const detail = turnDetail(v, t, true)
+  out.push(
+    Section(k, 'replay-now', 'THEN', [
+      chips.length ? <Box key="chips" flexDirection="row" columnGap={1} flexWrap="wrap">{chips}</Box> : null,
+      ...detail,
+    ]),
+  )
+  return out
 }
 
 // ── Dashboard: does anything need me, which step is it on, is it stuck ──

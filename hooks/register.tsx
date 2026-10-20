@@ -10,8 +10,8 @@ import { needsYouText, Pane, shortModel, summary, TABS, type View } from './rend
 import type { Kit } from './render/widgets'
 import { heartbeatOf } from './sessions'
 import { attribute, isPersistent, isPlanPath, ledgerPath, mergeTodos, parseLedger, parsePlanFile, planFromFile, promptPlan, settle, taskEvent } from './plan'
-import { changesFromGit } from './changes'
-import { checkKey, recordCheck } from './checks'
+import { changesFromGit, changesTotal } from './changes'
+import { checkKey, checkRows, recordCheck } from './checks'
 import * as H from './history'
 import { failingLocation, openOptions } from './openmenu'
 import * as S from './state'
@@ -554,6 +554,14 @@ export const register: Register = on => {
         let history = ended.history ?? []
         if (plan) history = H.noteSteps(history, plan.steps.filter(x => (x.startedAt ?? -1) >= since || (x.endedAt ?? -1) >= since || x.status === 'running'))
         for (const a of ended.agents.filter(x => x.startedAt >= since)) history = H.addAgent(history, a.type, a.phase !== 'failed', (a.endedAt ?? now) - a.startedAt)
+        // Snapshot what the dashboard shows now, for replaying this turn later.
+        const testRuns = checkRows(ended.health.checks ?? {}).find(c => c.kind === 'test')
+        history = H.setSnapshot(history, {
+          plan: plan && plan.steps.length ? { title: plan.title, ticket: plan.ticket, steps: plan.steps.map(x => ({ title: x.title, status: x.status, ms: x.startedAt !== undefined ? (x.endedAt ?? now) - x.startedAt : undefined })) } : undefined,
+          contextPct: ended.health.contextPct,
+          changes: ended.health.gitBase ? changesTotal(ended.health.changes ?? []) : undefined,
+          tests: testRuns ? testRuns.runs.slice(-5).map(r => r.ok) : undefined,
+        })
         history = H.endTurnEntry(history, now, failed)
         return { ...ended, plan, history, health: { ...ended.health, contextHistory } }
       })
@@ -929,6 +937,10 @@ export const register: Register = on => {
           })(),
         dismissPlan: () => void dismissPlan($),
         pick: value => void openPick($, value, e.surface),
+        turnPick: value =>
+          void update($, ui, (u): WatchUi =>
+            value === 'more' ? { ...u, historyLimit: (u.historyLimit ?? 10) + 10 } : value ? { ...u, replay: value, tab: 'replay' } : u,
+          ),
         filter: value => void update($, ui, (u): WatchUi => ({ ...u, historyFilter: value === 'turns' || value === 'problems' ? value : 'all' })),
         cycleFilter: () =>
           void update($, ui, (u): WatchUi => ({ ...u, historyFilter: u.historyFilter === 'all' ? 'turns' : u.historyFilter === 'turns' ? 'problems' : 'all' })),

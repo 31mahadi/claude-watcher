@@ -8,7 +8,7 @@ export type WatchPhase =
   | 'error'
   | 'done'
 
-export type WatchTab = 'turn' | 'plan' | 'agents' | 'calls' | 'history' | 'checks' | 'changes' | 'sessions' | 'health' | 'config'
+export type WatchTab = 'turn' | 'plan' | 'agents' | 'calls' | 'history' | 'checks' | 'changes' | 'sessions' | 'health' | 'config' | 'replay'
 
 export type WatchCall = {
   id: string
@@ -102,6 +102,14 @@ export type WatchPlan = {
 
 export type WatchHistoryCall = { label: string; ok?: boolean; durationMs?: number; note?: string }
 
+// What the dashboard showed when a turn ended, for replaying it from history.
+export type WatchTurnSnapshot = {
+  plan?: { title: string; ticket?: string; steps: { title: string; status: string; ms?: number }[] }
+  contextPct?: number
+  changes?: { files: number; added: number; removed: number }
+  tests?: boolean[]
+}
+
 export type WatchHistoryTurn = {
   kind: 'turn'
   id: string
@@ -119,6 +127,7 @@ export type WatchHistoryTurn = {
   steps: { title: string; status: string }[]
   agents: { label: string; ok: boolean; durationMs: number }[]
   waitMs: number
+  snapshot?: WatchTurnSnapshot
 }
 
 export type WatchHistoryEvent = {
@@ -174,6 +183,9 @@ export type WatchUi = {
   // History rows the person opened, by entry id.
   expanded: string[]
   historyFilter: 'all' | 'turns' | 'problems'
+  // Turn shown in the replay view, and how many turns the dashboard lists.
+  replay?: string
+  historyLimit?: number
   scope: 'this' | 'all'
   mutedUntil: number
   tick: number

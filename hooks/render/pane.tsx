@@ -563,12 +563,12 @@ function HistoryGlance(v: View) {
   return (
     <Box key="history" flexDirection="column">
       <Box flexDirection="row" gap={2} alignItems="center" flexWrap="wrap">
-        <Button key="history-toggle" plain label={collapsed ? '▸' : '▾'} onPress={() => v.actions.toggleHistory()} />
-        <Text dimColor bold>TURNS</Text>
-        {strip}
-        <Text dimColor>{collapsed ? `${all.length} turn${all.length === 1 ? '' : 's'} · collapsed` : 'bar height = turn length · red = problem'}</Text>
+        <Text dimColor bold>HISTORY</Text>
+        <Button key="history-toggle" plain label={collapsed ? `▸ show ${all.length} turn${all.length === 1 ? '' : 's'}` : '▾ hide'} onPress={() => v.actions.toggleHistory()} />
+        {collapsed ? null : strip}
         {picker}
-        <Button key="history-clear" plain label="clear" onPress={() => v.actions.clearHistory()} />
+        <Box flexGrow={1} />
+        <Button key="history-clear" plain label="✕ clear" onPress={() => v.actions.clearHistory()} />
       </Box>
       {collapsed ? null : (
         <>
@@ -586,13 +586,15 @@ function HistoryGlance(v: View) {
 // A past turn, drawn like the dashboard was when it ended.
 function ReplayView(v: View) {
   const { k, s } = v
-  const { Box, Text } = k.els
+  const { Box, Text, Button } = k.els
+  const back = Button ? <Button key="replay-back" plain label="← dashboard" onPress={() => v.actions.tab('turn')} /> : <Text dimColor>/watch to go back</Text>
   const all = (s.history ?? []).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
   const t = all.find(x => x.id === v.ui.replay)
-  if (!t) return Section(k, 'turn', 'TURN', [<Text dimColor>That turn is no longer in history.</Text>])
+  if (!t) return Section(k, 'turn', 'TURN', [back, <Text dimColor>That turn is no longer in history.</Text>])
   const n = all.indexOf(t) + 1
   const out: unknown[] = [
     Section(k, 'turn', 'TURN', [
+      back,
       <Box key="replay-head" flexDirection="row" justifyContent="space-between" gap={1}>
         <Text bold wrap="truncate-end">{`Turn ${n} · ${t.title || '(no prompt)'}`}</Text>
         <Text dimColor>{`${turnTimes(t)} · ${t.interrupted ? 'interrupted' : time(t.durationMs ?? 0, 'human')}`}</Text>

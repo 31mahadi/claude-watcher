@@ -46,6 +46,8 @@ export type WatchTestResult = {
   snippet?: string
 }
 
+export type WatchChange = { path: string; added: number; removed: number; binary: boolean; lastTurn?: number; byClaude: boolean }
+
 export type WatchHealth = {
   contextPct?: number
   contextTokens?: number
@@ -62,6 +64,10 @@ export type WatchHealth = {
   needsYou: WatchNeedsYou | null
   // Context % at each turn end, oldest first, last 20.
   contextHistory: number[]
+  // Commit the session started from, and what changed since.
+  gitBase?: string
+  changes: WatchChange[]
+  changesAt?: number
 }
 
 export type WatchPlanStep = {

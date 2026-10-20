@@ -132,7 +132,8 @@ async function loadPlanFile($: $, path: string, source: 'file' | 'planmode', for
   if (!text) return
   const ledger = source === 'file' ? await readOr($, ledgerPath(path)) : ''
   const key = `${text}\u0000${ledger}`
-  if (!force && planTexts.get(path) === key) return
+  const current = (await read($, snap)).plan
+  if (!force && current?.path === path && planTexts.get(path) === key) return
   const parsed = parsePlanFile(text)
   if (!parsed) return
   planTexts.set(path, key)
@@ -493,7 +494,11 @@ export const register: Register = on => {
       })
       if (ok && filePath && /^(Read|Edit|Write|MultiEdit)$/.test(e.tool)) {
         const looksLikePlan = isPlanPath(filePath) || (e.tool === 'Read' && /Implementation Plan\s*$/m.test(output.split('\n').slice(0, 3).join('\n')))
-        if (looksLikePlan) await loadPlanFile($, filePath, 'file', e.tool !== 'Read')
+        // Editing a plan makes it the plan. Reading one only does when no unfinished file plan is active,
+        // so a plan read for reference does not replace the one being executed.
+        const active = (await read($, snap)).plan
+        const takeOver = e.tool !== 'Read' || !isPersistent(active) || !!active?.endedAt || active?.path === filePath
+        if (looksLikePlan && takeOver) await loadPlanFile($, filePath, 'file', e.tool !== 'Read')
       }
       if (ok && e.tool === 'ExitPlanMode' && planModePath) await loadPlanFile($, planModePath, 'planmode', true)
       if (call.key && ok && cfg.estimate.enabled) {

@@ -215,7 +215,9 @@ function liveLine(v: View, indent: string) {
   const { Text } = k.els
   const cfg = k.cfg
   if (!isActive(s)) {
-    const turnStart = s.turnStartedAt ?? 0
+    // No turn since /clear: nothing to account for.
+    if (s.turnStartedAt === null) return null
+    const turnStart = s.turnStartedAt
     const steps = s.plan?.steps.filter(x => (x.status === 'done' || x.status === 'failed') && (x.endedAt ?? 0) >= turnStart).length ?? 0
     const t = s.health.lastTest && s.health.lastTest.at >= turnStart ? s.health.lastTest : undefined
     const facts = [`turn done · ${s.toolCalls} calls`, steps ? `${steps} steps` : undefined, t ? (t.ok ? 'tests ✓' : 'tests ✗') : undefined, s.health.editedFiles.length ? `${s.health.editedFiles.length} files` : undefined]

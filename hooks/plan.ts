@@ -112,14 +112,29 @@ function advance(steps: WatchPlanStep[], now: number): WatchPlanStep[] {
   return i < 0 ? steps : steps.map((s, j) => (j === i ? withStatus(s, 'running', now) : s))
 }
 
+// Exactly one running step: entering running sends any other running step back to pending.
+function setRunning(steps: WatchPlanStep[], i: number, now: number): WatchPlanStep[] {
+  return steps.map((s, j) => (j === i ? withStatus(s, 'running', now) : s.status === 'running' ? { ...s, status: 'pending' as const } : s))
+}
+
 const normal = (t: string) => t.replace(/^Task\s+\d+:\s*/i, '').trim().toLowerCase()
 
+// A todo or task names a step by "Task N:", by its exact title, or by a close prefix:
+// the shorter title is at least 60% of the longer and ends on a word boundary.
 function matchStep(steps: readonly WatchPlanStep[], text: string): number {
+  const num = /^\s*Task\s+(\d+):/i.exec(text)?.[1]
+  if (num) {
+    const i = steps.findIndex(s => s.id === `task-${num}`)
+    if (i >= 0) return i
+  }
   const t = normal(text)
   if (!t) return -1
+  const exact = steps.findIndex(s => s.title.toLowerCase() === t)
+  if (exact >= 0) return exact
   return steps.findIndex(s => {
     const title = s.title.toLowerCase()
-    return title === t || title.startsWith(t) || t.startsWith(title)
+    const [short, long] = title.length <= t.length ? [title, t] : [t, title]
+    return short.length >= 0.6 * long.length && long.startsWith(short) && /^\W|^$/.test(long.slice(short.length))
   })
 }
 
@@ -137,7 +152,6 @@ export function planFromFile(
 ): WatchPlan {
   const { now, prev } = opts
   const known = new Map((prev?.path === opts.path ? prev.steps : []).map(s => [s.id, s]))
-  const anyRunningBefore = [...known.values()].some(s => s.status === 'running')
   let steps = parsed.steps.map(p => {
     const before = known.get(p.id)
     const extras = (before?.substeps ?? []).filter(x => !p.substeps.some(y => y.title === x.title))
@@ -147,10 +161,8 @@ export function planFromFile(
     if (opts.done.has(num) || allChecked) return withStatus(base, 'done', now)
     return base
   })
-  if (anyRunningBefore || steps.some(finished)) {
-    // A running step that is now done hands over to the next one.
-    steps = advance(steps, now)
-  }
+  // The first unfinished step runs from the moment the plan is loaded, so early work is credited.
+  steps = advance(steps, now)
   const title = parsed.title || prev?.title || 'Plan'
   return {
     source: opts.source,
@@ -175,7 +187,8 @@ export function mergeTodos(plan: WatchPlan | null, todos: readonly Todo[], now: 
         extras.push({ title: todo.content, done: status === 'done' })
         continue
       }
-      if (status === 'done' || status === 'running') steps = steps.map((s, j) => (j === i ? withStatus(s, status, now) : s))
+      if (status === 'running') steps = setRunning(steps, i, now)
+      else if (status === 'done') steps = steps.map((s, j) => (j === i ? withStatus(s, 'done', now) : s))
     }
     if (steps.some(finished)) steps = advance(steps, now)
     const r = steps.findIndex(s => s.status === 'running')
@@ -208,7 +221,8 @@ export function taskEvent(plan: WatchPlan | null, ev: { id: string; title: strin
   if (plan && isPersistent(plan)) {
     const i = matchStep(plan.steps, ev.title)
     if (i < 0) return plan
-    return { ...plan, steps: plan.steps.map((s, j) => (j === i ? withStatus(s, ev.done ? 'done' : 'running', now) : s)) }
+    if (!ev.done) return { ...plan, steps: setRunning(plan.steps, i, now) }
+    return { ...plan, steps: advance(plan.steps.map((s, j) => (j === i ? withStatus(s, 'done', now) : s)), now) }
   }
   const base: WatchPlan = plan && plan.source === 'task' ? plan : { source: 'task', title: plan?.title ?? 'Tasks', ticket: plan?.ticket, steps: [], startedAt: plan?.startedAt ?? now }
   const id = `task:${ev.id}`
@@ -264,7 +278,8 @@ export function planProgress(plan: WatchPlan): { done: number; total: number; re
   const total = plan.steps.length
   const done = plan.steps.filter(finished).length
   const current = plan.steps.find(s => s.status === 'running')
-  const durations = plan.steps.filter(s => finished(s) && s.startedAt !== undefined && s.endedAt !== undefined).map(s => s.endedAt! - s.startedAt!)
+  // Steps marked done without being watched (ledger on load) have no real duration.
+  const durations = plan.steps.filter(s => finished(s) && s.startedAt !== undefined && s.endedAt !== undefined).map(s => s.endedAt! - s.startedAt!).filter(d => d > 0)
   if (durations.length === 0 || done === total) return { done, total, current }
   const sorted = [...durations].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)

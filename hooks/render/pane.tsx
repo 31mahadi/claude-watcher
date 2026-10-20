@@ -30,7 +30,6 @@ export type View = {
     pick: (value: string) => void
     turnPick: (value: string) => void
     toggleHistory: () => void
-    clearHistory: () => void
     filter: (value: string) => void
   }
 }

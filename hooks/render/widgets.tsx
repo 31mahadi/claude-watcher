@@ -12,7 +12,12 @@ export type Kit = {
   surface: string
   cfg: WatchConfig
   columns: number
+  // Pane body height in rows, when the surface says; the blocks fill it.
+  rows?: number
 }
+
+// One bar thickness everywhere: progress, gauge and agent lanes.
+export const BAR_PX = 4
 
 export const hasSvg = (k: Kit) => k.cfg.useSvg && 'Svg' in k.els
 export const hasRaster = (k: Kit) => k.cfg.useRaster && 'Raster' in k.els
@@ -39,7 +44,7 @@ export function Bar(k: Kit, key: string, fraction: number, sem: Semantic, label:
   const width = Math.max(6, inner(k) - label.length - 1)
   let bar
   if (hasSvg(k)) {
-    bar = <Svg source={svg.bar(fraction, css(sem, k.cfg), TRACK_CSS, width * 7, 6)} alt={textBar(fraction, width, 'ascii')} />
+    bar = <Svg source={svg.bar(fraction, css(sem, k.cfg), TRACK_CSS, width * 7, BAR_PX)} alt={textBar(fraction, width, 'ascii')} />
   } else if (hasRaster(k)) {
     const g = raster.bar(fraction, width, hex(sem, k.cfg), TRACK_HEX)
     bar = <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
@@ -139,8 +144,8 @@ export function MiniBar(k: Kit, key: string, fraction: number, sem: Semantic, ma
   const f = Math.max(0, Math.min(1, fraction))
   if (hasSvg(k)) {
     const w = cells * 7
-    const tick = mark !== undefined ? `<rect x="${Math.round(mark * w)}" y="0" width="1" height="8" fill="#8b949e"/>` : ''
-    const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="8" viewBox="0 0 ${w} 8"><rect y="2" width="${w}" height="4" rx="2" fill="${TRACK_CSS}"/><rect y="2" width="${Math.round(f * w)}" height="4" rx="2" fill="${css(sem, k.cfg)}"/>${tick}</svg>`
+    const tick = mark !== undefined ? `<line x1="${Math.round(mark * w)}" y1="0" x2="${Math.round(mark * w)}" y2="${BAR_PX}" stroke="#8b949e" stroke-width="1"/>` : ''
+    const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${BAR_PX}" viewBox="0 0 ${w} ${BAR_PX}"><rect width="${w}" height="${BAR_PX}" rx="${BAR_PX / 2}" fill="${TRACK_CSS}"/><rect width="${Math.round(f * w)}" height="${BAR_PX}" rx="${BAR_PX / 2}" fill="${css(sem, k.cfg)}"/>${tick}</svg>`
     return <Svg source={source} alt={`${Math.round(f * 100)}%`} />
   }
   if (hasRaster(k)) {

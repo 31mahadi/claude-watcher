@@ -112,10 +112,20 @@ export function Pane(v: View) {
   const { Box } = v.k.els
   const gap = v.k.cfg.theme === 'dense' ? 0 : 1
   if (v.ui.tab === 'turn') {
+    // Two blocks: what is happening now on top, history pinned to the bottom with the
+    // controls as its last row. The spacer between them takes the pane's spare height.
+    const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
+    const history = compact ? null : HistorySection(v, 'dashboard')
     return (
-      <Box flexDirection="column" gap={gap}>
-        {Dashboard(v)}
-        {Footer(v)}
+      <Box flexDirection="column" height={v.k.rows}>
+        <Box key="now" flexDirection="column" gap={gap} borderStyle="round" borderColor={resolve('dim', v.k.cfg)} paddingX={1}>
+          {Dashboard(v)}
+        </Box>
+        <Box key="spacer" flexGrow={1} />
+        <Box key="history-block" flexDirection="column" gap={gap} borderStyle="round" borderColor={resolve('dim', v.k.cfg)} paddingX={1}>
+          {history}
+          {Footer(v)}
+        </Box>
       </Box>
     )
   }
@@ -213,10 +223,10 @@ function Dashboard(v: View) {
   // Idle: nothing running and nothing to act on → one line, then history.
   if (!isActive(v.s) && !attention && !compact) {
     // What changed and how checks fared matter most right after a turn ends.
-    return [IdleLine(v), IdlePlan(v), ChangesSection(v), ChecksSection(v), HistorySection(v, 'dashboard')].filter(Boolean)
+    return [IdleLine(v), IdlePlan(v), ChangesSection(v), ChecksSection(v)].filter(Boolean)
   }
   if (compact) return [attention, PlanSection(v, true), ContextSection(v)].filter(Boolean)
-  return [attention, PlanSection(v, false), ChangesSection(v), ChecksSection(v), ContextSection(v), TimelineSection(v), HistorySection(v, 'dashboard')].filter(Boolean)
+  return [attention, PlanSection(v, false), ChangesSection(v), ChecksSection(v), ContextSection(v), TimelineSection(v)].filter(Boolean)
 }
 
 // "Idle · last turn 2:11 · 16 calls · tests ✓ · 2 files"  …  "main · ctx 57%"

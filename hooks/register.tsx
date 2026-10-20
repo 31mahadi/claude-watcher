@@ -438,9 +438,9 @@ async function alert($: $, text: string, urgent: boolean) {
   if (cfg.attention.desktopNotify !== 'never') await $.ui.notify(text, { title: 'Claude Watcher' }).catch(() => undefined)
 }
 
-async function kitFor($: $, e: { surface: string; props: { bodyColumns: number } }, els: Kit['els']): Promise<Kit> {
+async function kitFor($: $, e: { surface: string; props: { bodyColumns: number; scroll?: { bodyRows?: number } } }, els: Kit['els']): Promise<Kit> {
   const columns = e.surface === 'terminal' ? e.props.bodyColumns : Math.max(e.props.bodyColumns, 44)
-  return { els, surface: e.surface, cfg: await read($, config), columns }
+  return { els, surface: e.surface, cfg: await read($, config), columns, rows: e.props.scroll?.bodyRows }
 }
 
 

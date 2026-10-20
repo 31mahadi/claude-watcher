@@ -28,11 +28,11 @@ export function gantt(lanes: readonly Lane[], from: number, to: number, width = 
     const stroke = lane.outline ? ` stroke="${lane.outline}" stroke-width="1.5"` : ''
     return (
       `<text x="0" y="${y + 11.5}" ${font} fill="#8b949e">${esc(label(lane.label))}</text>` +
-      `<rect x="${labelWidth}" y="${y + 7}" width="${plot}" height="1" fill="#30363d"/>` +
-      `<rect x="${x.toFixed(1)}" y="${y + 3}" width="${w.toFixed(1)}" height="${row - 6}" rx="2" fill="${lane.color}"${stroke}/>`
+      `<rect x="${labelWidth}" y="${y + 7.5}" width="${plot}" height="1" fill="#30363d"/>` +
+      `<rect x="${x.toFixed(1)}" y="${y + 6}" width="${w.toFixed(1)}" height="4" rx="2" fill="${lane.color}"${stroke}/>`
     )
   })
-  const nowLine = `<rect x="${width - 1}" y="0" width="1" height="${height}" fill="#8b949e" opacity="0.5"/>`
+  const nowLine = `<line x1="${width - 0.5}" y1="0" x2="${width - 0.5}" y2="${height}" stroke="#8b949e" stroke-width="1" opacity="0.5"/>`
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join('')}${nowLine}</svg>`
 }
 

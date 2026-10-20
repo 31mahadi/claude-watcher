@@ -106,6 +106,23 @@ export function Row(k: Kit, left: unknown, right: string, valueWidth = 7) {
   )
 }
 
+// A labelled section: dim uppercase label column, rows in the value column. No border.
+export function Section(k: Kit, key: string, label: string, rows: unknown[]) {
+  const { Box, Text } = k.els
+  return (
+    <Box key={key} flexDirection="row">
+      <Box width={9} flexShrink={0}>
+        <Text dimColor bold>
+          {label}
+        </Text>
+      </Box>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        {rows}
+      </Box>
+    </Box>
+  )
+}
+
 // Small section heading: uppercase, dim, bold.
 export function SectionLabel(k: Kit, text: string) {
   const { Text } = k.els

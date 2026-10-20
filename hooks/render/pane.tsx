@@ -1,11 +1,15 @@
-import type { WatchCall, WatchConfig, WatchHistoryEvent, WatchHistoryTurn, WatchPeer, WatchPlan, WatchPlanStep, WatchSnapshot, WatchTab, WatchUi } from '../../types'
-import { filterHistory, isProblem } from '../history'
+import type { WatchCall, WatchChange, WatchConfig, WatchHistoryEvent, WatchHistoryTurn, WatchPeer, WatchPlan, WatchPlanStep, WatchSnapshot, WatchTab, WatchUi } from '../../types'
+import { changesTotal } from '../changes'
+import { checkRows } from '../checks'
+import { forecast, forecastText } from '../forecast'
+import { filterHistory, isProblem, lastCompactIndex } from '../history'
+import { failingLocation, openOptions } from '../openmenu'
 import { CHOICES, getPath } from '../config'
 import { estimateMs } from '../estimate'
-import { planProgress } from '../plan'
+import { isPersistent, planProgress } from '../plan'
 import { ago, basename, pct, seconds, time, truncate } from '../format'
 import { resolve, type Semantic } from './colors'
-import { Bar, Card, Donut, Gantt, inner, Mark, MiniBar, Pulse, Row, SectionLabel, Sparkline, type GanttLane, type Kit } from './widgets'
+import { Bar, Card, Donut, Gantt, inner, Mark, MiniBar, Pulse, Row, Section, type GanttLane, type Kit } from './widgets'
 
 export type View = {
   k: Kit
@@ -29,7 +33,7 @@ export type View = {
 }
 
 // 'turn' is the adaptive dashboard; the others are detail views reached by /watch <tab>.
-export const TABS: readonly WatchTab[] = ['turn', 'plan', 'agents', 'calls', 'history', 'sessions', 'health', 'config']
+export const TABS: readonly WatchTab[] = ['turn', 'plan', 'agents', 'calls', 'history', 'checks', 'changes', 'sessions', 'health', 'config']
 
 // The VS Code side panel is ~45-55 columns; only truly tiny panes go compact.
 const COMPACT_BELOW = 36
@@ -105,16 +109,13 @@ export function needsYouText(s: WatchSnapshot, now: number): string {
 }
 
 export function Pane(v: View) {
-  const { Box, Button, Text } = v.k.els
+  const { Box } = v.k.els
   const gap = v.k.cfg.theme === 'dense' ? 0 : 1
   if (v.ui.tab === 'turn') {
-    const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
-    // Live state on top; history pinned below it, pushed to the bottom by a spacer.
     return (
-      <Box flexDirection="column" gap={gap} flexGrow={1}>
+      <Box flexDirection="column" gap={gap}>
         {Dashboard(v)}
-        <Box key="spacer" flexGrow={1} />
-        {HistorySection(v, compact ? 'line' : 'dashboard')}
+        {Footer(v)}
       </Box>
     )
   }
@@ -126,19 +127,76 @@ export function Pane(v: View) {
         : v.ui.tab === 'calls'
           ? CallsDetail(v)
           : v.ui.tab === 'history'
-          ? HistorySection(v, 'full')
-          : v.ui.tab === 'sessions'
-          ? SessionsDetail(v)
-          : v.ui.tab === 'health'
-            ? HealthDetail(v)
-            : ConfigDetail(v)
+            ? HistorySection(v, 'full')
+            : v.ui.tab === 'checks'
+              ? ChecksDetail(v)
+              : v.ui.tab === 'changes'
+                ? ChangesDetail(v)
+                : v.ui.tab === 'sessions'
+                  ? SessionsDetail(v)
+                  : v.ui.tab === 'health'
+                    ? HealthDetail(v)
+                    : ConfigDetail(v)
   return (
     <Box flexDirection="column" gap={gap}>
-      <Box flexDirection="row" gap={1}>
-        <Button key="back" label="← dashboard" hotkey="b" onPress={() => v.actions.tab('turn')} />
-        <Text dimColor>{v.ui.tab}</Text>
-      </Box>
       {detail}
+      {Footer(v)}
+    </Box>
+  )
+}
+
+// Only the terminal measures real cells; elsewhere the surface cuts text itself.
+function fit(k: Kit, text: string, width: number): string {
+  return k.surface === 'terminal' ? truncate(text, width) : text
+}
+
+const VIEWS: readonly { value: WatchTab; label: string }[] = [
+  { value: 'turn', label: 'dashboard' },
+  { value: 'plan', label: 'plan' },
+  { value: 'history', label: 'history' },
+  { value: 'changes', label: 'changes' },
+  { value: 'checks', label: 'checks' },
+  { value: 'calls', label: 'calls' },
+  { value: 'agents', label: 'agents' },
+  { value: 'sessions', label: 'sessions' },
+  { value: 'health', label: 'health' },
+  { value: 'config', label: 'settings' },
+]
+
+// The one row of controls: view, history filter, open….
+function Footer(v: View) {
+  const { k, s } = v
+  const { Box, Text, Select } = k.els
+  const rule = <Text dimColor wrap="truncate-end">{'─'.repeat(k.surface === 'terminal' ? k.columns : 200)}</Text>
+  if (!Select) {
+    return (
+      <Box key="footer" flexDirection="column">
+        {rule}
+        <Text dimColor>/watch history · changes · checks · plan · clear</Text>
+      </Box>
+    )
+  }
+  const cwd = s.cwd
+  const failing = failingLocation(s.health.lastTest && !s.health.lastTest.ok ? s.health.lastTest.snippet : undefined, cwd)
+  const open = openOptions({ planPath: s.plan?.path, failing, changes: s.health.changes ?? [], sessionId: s.sessionId })
+  return (
+    <Box key="footer" flexDirection="column">
+      {rule}
+      <Box flexDirection="row" gap={2} flexWrap="wrap">
+        <Select key="view" label="view" value={v.ui.tab} options={VIEWS.map(x => ({ value: x.value, label: x.label }))} onSelect={(value: string) => v.actions.tab(value as WatchTab)} />
+        <Select
+          key="filter"
+          label="history"
+          value={v.ui.historyFilter ?? 'all'}
+          options={[
+            { value: 'all', label: 'all' },
+            { value: 'turns', label: 'turns' },
+            { value: 'problems', label: 'problems' },
+          ]}
+          onSelect={(value: string) => v.actions.filter(value)}
+        />
+        {open.length ? <Select key="open" label="open…" options={open.map(o => ({ value: o.value, label: o.label }))} onSelect={(value: string) => v.actions.pick(value)} /> : null}
+      </Box>
     </Box>
   )
 }
@@ -151,7 +209,49 @@ const PENDING_SHOWN = 2
 
 function Dashboard(v: View) {
   const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
-  return [AttentionCard(v), PlanCard(v, compact), compact ? null : TimelineCard(v), HealthLine(v)].filter(Boolean)
+  const attention = AttentionCard(v)
+  // Idle: nothing running and nothing to act on → one line, then history.
+  if (!isActive(v.s) && !attention && !compact) {
+    return [IdleLine(v), IdlePlan(v), HistorySection(v, 'dashboard')].filter(Boolean)
+  }
+  if (compact) return [attention, PlanSection(v, true), ContextSection(v)].filter(Boolean)
+  return [attention, PlanSection(v, false), ChangesSection(v), ChecksSection(v), ContextSection(v), TimelineSection(v), HistorySection(v, 'dashboard')].filter(Boolean)
+}
+
+// "Idle · last turn 2:11 · 16 calls · tests ✓ · 2 files"  …  "main · ctx 57%"
+function IdleLine(v: View) {
+  const { k, s } = v
+  const { Box, Text } = k.els
+  const cfg = k.cfg
+  const turns = (s.history ?? []).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
+  const last = turns[turns.length - 1]
+  const left = last
+    ? [
+        `Idle · last turn ${last.interrupted ? 'interrupted' : time(last.durationMs ?? 0, cfg.timeFormat)}`,
+        `${last.calls.length + last.moreCalls} calls`,
+        last.tests ? (last.tests.ok ? 'tests ✓' : 'tests ✗') : undefined,
+        last.files.length ? `${last.files.length} file${last.files.length === 1 ? '' : 's'}` : undefined,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : 'Idle · waiting for a prompt'
+  const right = [s.branch, s.health.contextPct !== undefined ? `ctx ${pct(s.health.contextPct)}` : undefined].filter(Boolean).join(' · ')
+  return (
+    <Box key="idle" flexDirection="row" justifyContent="space-between">
+      <Text wrap="truncate-end">{left}</Text>
+      {right ? <Text dimColor>{right}</Text> : null}
+    </Box>
+  )
+}
+
+// A file plan that is not finished stays visible while idle: header and bar only.
+function IdlePlan(v: View) {
+  const plan = v.s.plan
+  if (!plan || !isPersistent(plan) || plan.steps.length === 0) return null
+  const { Text } = v.k.els
+  const p = planProgress(plan)
+  if (plan.endedAt) return Section(v.k, 'plan', 'PLAN', [<Text>{Mark(v.k, '✓', 'ok')}{` ${plan.title} · all ${p.total} steps done`}</Text>])
+  return Section(v.k, 'plan', 'PLAN', [planHeaderRow(v, plan), Bar(v.k, 'plan-bar', p.done / p.total, 'accent', `${p.done} / ${p.total}`)])
 }
 
 // Usual duration of the running call and how far past it we are.
@@ -205,20 +305,28 @@ function planSem(v: View, plan: WatchPlan): Semantic {
   return isActive(v.s) ? 'accent' : 'dim'
 }
 
-function planHeader(v: View, plan: WatchPlan) {
-  const { k } = v
-  const { Box, Text, Button } = k.els
-  const active = isActive(v.s)
-  const sem = planSem(v, plan)
+// "CAM-77 · Migrate auth"                        "3 / 13 · ~8m   12:40"
+function planHeaderRow(v: View, plan: WatchPlan) {
+  const { k, s, now } = v
+  const { Box, Text } = k.els
+  const cfg = k.cfg
+  const active = isActive(s)
   const ticket = plan.ticket && !plan.title.includes(plan.ticket) ? plan.ticket : undefined
+  const p = planProgress(plan)
+  const end = plan.endedAt ?? (active ? now : (s.turnEndedAt ?? now))
+  const right = [p.total ? `${p.done} / ${p.total}${p.remainingMs ? ` · ~${time(p.remainingMs, 'human')}` : ''}` : undefined, time(end - plan.startedAt, cfg.timeFormat)]
+    .filter(Boolean)
+    .join('   ')
   return (
-    <Box flexDirection="row" gap={1}>
-      {active && !plan.endedAt ? Pulse(k, 'accent') : Mark(k, plan.endedAt ? '✓' : '○', plan.endedAt ? 'ok' : sem === 'attention' ? 'attention' : 'dim')}
-      <Text wrap="truncate-end">
-        {ticket ? <Text color={resolve('accent', k.cfg)}>{`${ticket} · `}</Text> : null}
-        <Text bold>{plan.title || 'Working'}</Text>
-      </Text>
-      <Button key="plan-dismiss" plain label="✕" onPress={() => v.actions.dismissPlan()} />
+    <Box key="plan-head" flexDirection="row" justifyContent="space-between" gap={1}>
+      <Box flexDirection="row" gap={1} flexShrink={1}>
+        {active && !plan.endedAt ? Pulse(k, 'accent') : Mark(k, plan.endedAt ? '✓' : '○', plan.endedAt ? 'ok' : 'dim')}
+        <Text wrap="truncate-end">
+          {ticket ? <Text color={resolve('accent', cfg)}>{`${ticket} · `}</Text> : null}
+          <Text bold>{plan.title || 'Working'}</Text>
+        </Text>
+      </Box>
+      <Text dimColor>{right}</Text>
     </Box>
   )
 }
@@ -280,58 +388,67 @@ function stepRow(v: View, step: WatchPlanStep) {
   )
 }
 
-// The running step's detail: live call, files and calls, tests, substeps.
+// A labelled detail row under a step: "  running   npm test · 0:41 · usually ~1:30".
+function detailRow(k: Kit, label: string, value: unknown, sem?: Semantic) {
+  const { Box, Text } = k.els
+  return (
+    <Box flexDirection="row">
+      <Text dimColor>{`  ${label.padEnd(9)}`}</Text>
+      {typeof value === 'string' ? <Text wrap="truncate-end" color={sem ? resolve(sem, k.cfg) : undefined}>{value}</Text> : value}
+    </Box>
+  )
+}
+
+// The running step's detail: live call, next sub-step, tests, files.
 function stepDetail(v: View, step: WatchPlanStep, full: boolean): unknown[] {
-  const { k } = v
-  const { Text } = k.els
-  const pad = '    '
+  const { k, s } = v
+  const { Text, Code } = k.els
+  const cfg = k.cfg
   const lines: unknown[] = []
-  if (step.status === 'running') lines.push(liveLine(v, pad))
-  if (step.editedFiles.length || step.calls) {
-    const files = step.editedFiles.length ? `edited ${step.editedFiles.map(basename).join(', ')} · ` : ''
-    lines.push(<Text dimColor wrap="truncate-end">{`${pad}${files}${step.calls} calls`}</Text>)
-  }
-  if (step.lastTest) {
-    const t = step.lastTest
-    lines.push(t.ok ? <Text dimColor>{`${pad}tests ✓${t.passed ? ` ${t.passed}` : ''}`}</Text> : <Text color={resolve('attention', k.cfg)}>{`${pad}tests ✗ ${t.failed} failed`}</Text>)
-    if (full && !t.ok && t.snippet && k.els.Code) {
-      const { Code } = k.els
-      lines.push(<Code source={t.snippet} />)
+  if (step.status === 'running' && isActive(s)) {
+    const timing = callTiming(v)
+    if (s.current && timing) {
+      const usual = timing.usual ? `usually ~${time(timing.usual, cfg.timeFormat)}` : 'first run'
+      lines.push(detailRow(k, 'running', `${s.current.label} · ${time(timing.elapsed, cfg.timeFormat)} · ${usual}`))
+    } else {
+      lines.push(detailRow(k, 'running', 'thinking'))
     }
   }
   if (step.substeps?.length) {
-    const subs = step.substeps.map(x => `${x.done ? '[x]' : '[ ]'} ${x.title}`)
-    if (full) for (const x of subs) lines.push(<Text dimColor>{`${pad}${x}`}</Text>)
+    const done = step.substeps.filter(x => x.done).length
+    if (full) for (const x of step.substeps) lines.push(detailRow(k, '', `${x.done ? '✓' : '○'} ${x.title}`))
     else {
-      const done = step.substeps.filter(x => x.done).length
       const next = step.substeps.find(x => !x.done)
-      const text = next ? `○ next: ${next.title} · ${done} of ${step.substeps.length} done` : `✓ all ${step.substeps.length} sub-steps done`
-      lines.push(<Text dimColor wrap="truncate-end">{`${pad}${truncate(text, inner(k) - pad.length)}`}</Text>)
+      lines.push(detailRow(k, 'next', next ? `${next.title} · ${done} of ${step.substeps.length} done` : `all ${step.substeps.length} done`))
     }
+  }
+  if (step.lastTest) {
+    const t = step.lastTest
+    lines.push(detailRow(k, 'tests', t.ok ? `✓${t.passed ? ` ${t.passed} passed` : ''}` : `✗ ${t.failed} failed`, t.ok ? undefined : 'attention'))
+    if (full && !t.ok && t.snippet && Code) lines.push(<Code source={t.snippet} />)
+  }
+  if (step.editedFiles.length || step.calls) {
+    const files = step.editedFiles.length ? `${step.editedFiles.map(basename).join(', ')} · ` : ''
+    lines.push(detailRow(k, 'files', `${files}${step.calls} calls`))
   }
   return lines
 }
 
-function PlanCard(v: View, compact: boolean) {
+// PLAN: header, bar, done steps (collapsed past six), the running step in detail, two pending.
+function PlanSection(v: View, compact: boolean) {
   const { s, k, now } = v
   const { Text } = k.els
   const cfg = k.cfg
   const plan = s.plan
-  if (!plan) return Card(k, 'plan', 'Watcher', undefined, [<Text dimColor>Waiting for a prompt.</Text>])
-  const end = plan.endedAt ?? (isActive(s) ? now : (s.turnEndedAt ?? now))
-  const right = time(end - plan.startedAt, cfg.timeFormat)
-  if (compact) return Card(k, 'plan', planHeader(v, plan), right, [], planSem(v, plan))
-
-  const body: unknown[] = []
+  if (!plan) return null
+  if (compact) return Section(k, 'plan', 'PLAN', [planHeaderRow(v, plan)])
+  const rows: unknown[] = [planHeaderRow(v, plan)]
   const p = planProgress(plan)
   if (p.total === 0) {
-    body.push(liveLine(v, ''))
-    return Card(k, 'plan', planHeader(v, plan), right, body, planSem(v, plan))
+    rows.push(liveLine(v, ''))
+    return Section(k, 'plan', 'PLAN', rows)
   }
-  const label = p.done === p.total ? 'all steps done' : `${p.done} / ${p.total}${p.remainingMs ? ` · ~${time(p.remainingMs, cfg.timeFormat)} left` : ''}`
-  body.push(Bar(k, 'plan-bar', p.done / p.total, p.done === p.total ? 'ok' : 'accent', label))
-
-  // Finished steps: failed always shown; beyond DONE_SHOWN done, collapse all but the last two.
+  rows.push(Bar(k, 'plan-bar', p.done / p.total, p.done === p.total ? 'ok' : 'accent', p.done === p.total ? 'all done' : `${Math.round((p.done / p.total) * 100)}%`))
   const finished = plan.steps.filter(x => x.status === 'done' || x.status === 'failed')
   const doneOnly = finished.filter(x => x.status === 'done')
   const collapsed = doneOnly.length > DONE_SHOWN ? new Set(doneOnly.slice(0, -2).map(x => x.id)) : new Set<string>()
@@ -341,56 +458,102 @@ function PlanCard(v: View, compact: boolean) {
     if (collapsed.has(step.id)) {
       if (!collapsedShown) {
         const sum = doneOnly.slice(0, -2).reduce((t, x) => t + ((x.endedAt ?? 0) - (x.startedAt ?? x.endedAt ?? 0)), 0)
-        body.push(Row(k, <Text>{Mark(k, '✓', 'ok')}{` ${collapsed.size} steps done`}</Text>, time(sum, cfg.timeFormat)))
+        rows.push(Row(k, <Text>{Mark(k, '✓', 'ok')}{` ${collapsed.size} steps done`}</Text>, time(sum, cfg.timeFormat)))
         collapsedShown = true
       }
       continue
     }
-    body.push(stepRow(v, step))
-    if (step.status === 'running') body.push(...stepDetail(v, step, false))
+    rows.push(stepRow(v, step))
+    if (step.status === 'running') rows.push(...stepDetail(v, step, false))
   }
-  if (!p.current) body.push(liveLine(v, ''))
+  if (!p.current) rows.push(liveLine(v, ''))
   const pending = plan.steps.filter(x => x.status === 'pending')
-  for (const step of pending.slice(0, PENDING_SHOWN)) body.push(stepRow(v, step))
-  if (pending.length > PENDING_SHOWN) body.push(<Text dimColor>{`+${pending.length - PENDING_SHOWN} more · /watch plan`}</Text>)
-  return Card(k, 'plan', planHeader(v, plan), right, body, planSem(v, plan))
+  for (const step of pending.slice(0, PENDING_SHOWN)) rows.push(stepRow(v, step))
+  if (pending.length > PENDING_SHOWN) rows.push(<Text dimColor>{`+${pending.length - PENDING_SHOWN} more`}</Text>)
+  void now
+  return Section(k, 'plan', 'PLAN', rows)
 }
 
-// One plain line: context with its trend, git, tests, other sessions waiting.
-function HealthLine(v: View) {
-  const { s, k, peers } = v
-  const { Box, Text, Button } = k.els
-  const hl = s.health
-  const items: unknown[] = []
-  if (hl.contextPct !== undefined) {
-    const sem: Semantic | undefined = hl.contextPct >= 90 ? 'attention' : hl.contextPct >= k.cfg.health.contextWarnPct ? 'warn' : undefined
-    const trend = [...hl.contextHistory, Math.round(hl.contextPct)]
-    items.push(
-      <Box key="ctx" flexDirection="row" gap={1} alignItems="center">
-        {sem ? <Text color={resolve(sem, k.cfg)}>{`ctx ${pct(hl.contextPct)}`}</Text> : <Text dimColor>{`ctx ${pct(hl.contextPct)}`}</Text>}
-        {MiniBar(k, 'ctx-bar', hl.contextPct / 100, sem ?? 'dim', k.cfg.health.contextWarnPct / 100)}
-        {trend.length >= 3 ? Sparkline(k, 'ctx-trend', trend, { sem: sem ?? 'dim', cells: 20, max: 100, alt: 'context per turn' }) : null}
-      </Box>,
-    )
-  }
-  if (s.branch) items.push(<Text dimColor>{`${s.branch}${hl.dirtyFiles ? ` · ${hl.dirtyFiles} dirty` : ''}`}</Text>)
-  const t = hl.lastTest
-  if (t) items.push(<Text dimColor>{t.ok ? `tests ✓${t.passed ? ` ${t.passed}` : ''}` : `tests ✗ ${t.failed}`}</Text>)
-  const waiting = peers.filter(x => x.sessionId !== s.sessionId && x.needsYou && !x.endedAt)
-  if (waiting.length) {
-    const n = waiting.length
-    items.push(
-      <Button key="other-sessions" plain onPress={() => v.actions.tab('sessions')}>
-        <Text color={resolve('warn', k.cfg)}>{`⏸ ${n} other session${n > 1 ? 's need' : ' needs'} you`}</Text>
-      </Button>,
-    )
-  }
-  if (items.length === 0) return null
+// CHANGES: Claude's edits with +N −M and the turn; yours dim below; a total.
+function ChangesSection(v: View) {
+  const { k, s } = v
+  const { Text } = k.els
+  const rows0 = s.health.changes ?? []
+  if (rows0.length === 0) return null
+  const mine = rows0.filter(r => r.byClaude)
+  const yours = rows0.filter(r => !r.byClaude)
+  const rows: unknown[] = []
+  for (const r of mine.slice(0, 6)) rows.push(changeRow(k, r, false))
+  if (mine.length > 6) rows.push(<Text dimColor>{`+${mine.length - 6} more`}</Text>)
+  if (yours.length) rows.push(<Text dimColor>{`also changed (yours): ${yours.length} file${yours.length === 1 ? '' : 's'}`}</Text>)
+  const t = changesTotal(rows0)
+  if (t.files) rows.push(<Text dimColor>{`${t.files} files · +${t.added} −${t.removed}`}</Text>)
+  return Section(k, 'changes', 'CHANGES', rows)
+}
+
+function changeRow(k: Kit, r: WatchChange, dim: boolean) {
+  const { Box, Text } = k.els
+  const counts = r.binary ? 'bin' : r.added < 0 ? 'new' : `+${r.added} −${r.removed}`
   return (
-    <Box key="health" flexDirection="row" columnGap={2} flexWrap="wrap">
-      {items}
+    <Box flexDirection="row">
+      <Box flexGrow={1} flexShrink={1}>
+        <Text wrap="truncate-end" dimColor={dim}>{fit(k, r.path, inner(k) - 20)}</Text>
+      </Box>
+      <Box width={11} justifyContent="flex-end">
+        <Text dimColor={dim}>{counts}</Text>
+      </Box>
+      <Box width={8} justifyContent="flex-end">
+        <Text dimColor>{r.lastTurn ? `turn ${r.lastTurn}` : ''}</Text>
+      </Box>
     </Box>
   )
+}
+
+// CHECKS: each test/lint/build command, its last five outcomes, when and how.
+function ChecksSection(v: View, all = false) {
+  const { k, s, now } = v
+  const { Box, Text, Code } = k.els
+  const list = checkRows(s.health.checks ?? {})
+  if (list.length === 0) return null
+  const rows = (all ? list : list.slice(0, 4)).flatMap(c => {
+    const last = c.runs[c.runs.length - 1]!
+    const outcome = last.failed ? `${last.failed} failed` : last.passed ? `${last.passed} passed` : last.ok ? 'passed' : 'failed'
+    const row = (
+      <Box flexDirection="row" gap={1}>
+        <Box flexGrow={1} flexShrink={1}>
+          <Text wrap="truncate-end">{fit(k, c.command, inner(k) - 30)}</Text>
+        </Box>
+        <Text>
+          {c.runs.slice(-5).map((r, i) => (
+            <Text color={resolve(r.ok ? 'ok' : 'attention', k.cfg)}>{`${i ? ' ' : ''}${r.ok ? '✓' : '✗'}`}</Text>
+          ))}
+        </Text>
+        <Box width={18} justifyContent="flex-end">
+          <Text dimColor>{`${ago(now - last.at)} · ${outcome}`}</Text>
+        </Box>
+      </Box>
+    )
+    return all && !last.ok && last.snippet && Code ? [row, <Code source={last.snippet} />] : [row]
+  })
+  return Section(k, 'checks', 'CHECKS', rows)
+}
+
+// CONTEXT: % with a gauge, and turns left before compaction at the current burn.
+function ContextSection(v: View) {
+  const { k, s } = v
+  const { Box, Text } = k.els
+  const hl = s.health
+  if (hl.contextPct === undefined) return null
+  const sem: Semantic | undefined = hl.contextPct >= 90 ? 'attention' : hl.contextPct >= k.cfg.health.contextWarnPct ? 'warn' : undefined
+  const f = forecast(hl.contextHistory ?? [], lastCompactIndex(s.history ?? []), hl.contextPct, k.cfg.health.compactAtPct ?? 85)
+  const row = (
+    <Box flexDirection="row" gap={1} alignItems="center">
+      <Text color={sem ? resolve(sem, k.cfg) : undefined}>{pct(hl.contextPct)}</Text>
+      {MiniBar(k, 'ctx-bar', hl.contextPct / 100, sem ?? 'accent', k.cfg.health.contextWarnPct / 100, 12)}
+      {(hl.contextHistory ?? []).length >= 1 ? <Text dimColor>{forecastText(f)}</Text> : null}
+    </Box>
+  )
+  return Section(k, 'context', 'CONTEXT', [row])
 }
 
 function agentSem(a: WatchSnapshot['agents'][number]): Semantic {
@@ -424,17 +587,15 @@ function ganttFrom(v: View): number {
   return Math.max(now - k.cfg.visuals.ganttWindowMinutes * 60_000, Math.min(s.turnStartedAt ?? now, ...s.agents.map(a => a.startedAt)))
 }
 
-// One timeline for main and every agent: parallelism, slow lanes, failures at once.
-function TimelineCard(v: View) {
+// AGENTS: one swimlane chart for main and every agent; rows for running and failed ones.
+function TimelineSection(v: View) {
   const { s, k, now } = v
   if (s.agents.length === 0) return null
   const running = s.agents.filter(a => a.phase === 'running')
   const failed = s.agents.filter(a => a.phase === 'failed')
-  const right = [running.length ? `${running.length} running` : undefined, failed.length ? `${failed.length} failed` : undefined].filter(Boolean).join(' · ') || `${s.agents.length} done`
   const chart = Gantt(k, 'timeline', lanes(v), ganttFrom(v), now)
-  // Under the chart, only the lanes worth a line: running (what they do) and failed.
-  const rows = [...running, ...failed].slice(0, 4).map(a => agentRow(v, a))
-  return Card(k, 'timeline', 'Timeline', right, [chart ?? s.agents.slice(-4).map(a => agentRow(v, a)), ...(chart ? rows : [])])
+  const rows = chart ? [chart, ...[...running, ...failed].slice(0, 4).map(a => agentRow(v, a))] : s.agents.slice(-4).map(a => agentRow(v, a))
+  return Section(k, 'agents', 'AGENTS', rows)
 }
 
 // "claude-opus-5-5" → "opus 5.5"; other ids pass through.
@@ -509,7 +670,7 @@ function turnDetail(v: View, t: WatchHistoryTurn, full: boolean): unknown[] {
 
 function HistorySection(v: View, mode: 'line' | 'dashboard' | 'full') {
   const { k, s } = v
-  const { Box, Text, Button } = k.els
+  const { Box, Text } = k.els
   const cfg = k.cfg
   const all = s.history ?? []
   const turns = all.filter((e): e is WatchHistoryTurn => e.kind === 'turn')
@@ -519,53 +680,54 @@ function HistorySection(v: View, mode: 'line' | 'dashboard' | 'full') {
   const shown = filterHistory(all, filter).reverse()
   const rows = mode === 'full' ? shown : shown.slice(0, HISTORY_ROWS)
   const number = new Map(turns.map((t, i) => [t.id, i + 1]))
-  const open = new Set(v.ui.expanded ?? [])
   const body: unknown[] = []
   for (const e of rows) {
     if (e.kind === 'event') {
-      const sem: Semantic = e.icon === 'error' ? 'attention' : 'dim'
       body.push(
-        <Text key={`hist-${e.id}`} wrap="truncate-end">
-          <Text dimColor>{`  ${clock(e.at)}  `}</Text>
-          {Mark(k, EVENT_ICON[e.icon], sem)}
-          <Text dimColor>{` ${e.text}`}</Text>
+        <Text key={`hist-${e.id}`} wrap="truncate-end" dimColor>
+          {`${clock(e.at)}  `}
+          {Mark(k, EVENT_ICON[e.icon], e.icon === 'error' ? 'attention' : 'dim')}
+          {` ${e.text}`}
         </Text>,
       )
       continue
     }
-    const expanded = mode === 'full' || open.has(e.id)
-    const sem: Semantic = isProblem(e) ? 'attention' : e.ended ? 'dim' : 'accent'
+    const problem = isProblem(e)
+    const live = !e.ended
     body.push(
-      // One line per row. Only the glyph is a control (surfaces draw Buttons as chips);
-      // a problem row gets a red edge, not red text.
       <Box key={`row-${e.id}`} flexDirection="row" gap={1}>
-        <Text color={sem === 'attention' ? resolve('attention', cfg) : undefined}>{sem === 'attention' ? '▌' : ' '}</Text>
-        <Button key={`hist-${e.id}`} plain label={expanded ? '▾' : '▸'} onPress={() => v.actions.toggle(e.id)} />
-        <Text wrap="truncate-end" color={sem === 'accent' ? resolve('accent', cfg) : undefined}>
-          {truncate(`${clock(e.at)}  ${turnSummary(e, number.get(e.id) ?? 0, cfg)}`, inner(k) - 6)}
-        </Text>
+        <Text dimColor>{clock(e.at)}</Text>
+        {Mark(k, live ? '▶' : problem ? '✗' : '✓', live ? 'accent' : problem ? 'attention' : 'ok')}
+        <Text wrap="truncate-end">{fit(k, turnSummary(e, number.get(e.id) ?? 0, cfg), inner(k) - 9)}</Text>
       </Box>,
     )
-    if (expanded) body.push(...turnDetail(v, e, mode === 'full'))
+    if (mode === 'full') body.push(...turnDetail(v, e, true))
   }
-  if (shown.length > rows.length) body.push(<Text dimColor>{`+${shown.length - rows.length} older · /watch history`}</Text>)
+  if (shown.length > rows.length) body.push(<Text dimColor>{`+${shown.length - rows.length} older`}</Text>)
   if (rows.length === 0) body.push(<Text dimColor>{filter === 'problems' ? 'No problems so far.' : 'Nothing yet.'}</Text>)
-  return (
-    <Box key="history" flexDirection="column">
-      <Box flexDirection="row" justifyContent="space-between">
-        {SectionLabel(k, 'HISTORY')}
-        <Box flexDirection="row" gap={1}>
-          <Button key="history-filter" plain onPress={() => v.actions.cycleFilter()}>
-            <Text dimColor>{`[${filter}]`}</Text>
-          </Button>
-          <Button key="history-clear" plain onPress={() => v.actions.clearHistory()}>
-            <Text dimColor>[clear]</Text>
-          </Button>
-        </Box>
-      </Box>
-      {body}
-    </Box>
-  )
+  return Section(k, 'history', 'HISTORY', body)
+}
+
+function ChangesDetail(v: View) {
+  const { k, s } = v
+  const { Text } = k.els
+  const rows0 = s.health.changes ?? []
+  if (rows0.length === 0) return Section(k, 'changes', 'CHANGES', [<Text dimColor>{s.health.gitBase ? 'No changes since the session started.' : 'Not a git repository.'}</Text>])
+  const mine = rows0.filter(r => r.byClaude)
+  const yours = rows0.filter(r => !r.byClaude)
+  const rows: unknown[] = mine.map(r => changeRow(k, r, false))
+  const t = changesTotal(rows0)
+  rows.push(<Text dimColor>{`${t.files} files · +${t.added} −${t.removed}`}</Text>)
+  if (yours.length) {
+    rows.push(<Text dimColor>also changed (yours)</Text>)
+    rows.push(...yours.map(r => changeRow(k, r, true)))
+  }
+  return Section(k, 'changes', 'CHANGES', rows)
+}
+
+function ChecksDetail(v: View) {
+  const { Text } = v.k.els
+  return ChecksSection(v, true) ?? Section(v.k, 'checks', 'CHECKS', [<Text dimColor>No test, lint or build runs yet.</Text>])
 }
 
 // ── Detail views (/watch <tab>) ──
@@ -609,7 +771,8 @@ function PlanDetail(v: View) {
     body.push(stepRow(v, step))
     if (step.status !== 'pending') body.push(...stepDetail(v, step, true))
   }
-  return Card(k, 'plan', planHeader(v, plan), right, body, planSem(v, plan))
+  void right
+  return Section(k, 'plan', 'PLAN', [planHeaderRow(v, plan), ...body])
 }
 
 function AgentsDetail(v: View) {

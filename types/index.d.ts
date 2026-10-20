@@ -8,7 +8,7 @@ export type WatchPhase =
   | 'error'
   | 'done'
 
-export type WatchTab = 'turn' | 'plan' | 'agents' | 'calls' | 'history' | 'sessions' | 'health' | 'config'
+export type WatchTab = 'turn' | 'plan' | 'agents' | 'calls' | 'history' | 'checks' | 'changes' | 'sessions' | 'health' | 'config'
 
 export type WatchCall = {
   id: string

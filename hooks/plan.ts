@@ -1,6 +1,8 @@
 // The plan model: parse plan files and ledgers, merge todo/task events, and
 // attribute what happens to the step that is running. Pure; no `$`.
 
+import type { WatchPlan, WatchPlanStep, WatchTestResult } from '../types'
+
 export type ParsedStep = { id: string; title: string; substeps: { title: string; done: boolean }[] }
 export type ParsedPlan = { title: string; steps: ParsedStep[] }
 
@@ -79,4 +81,193 @@ export function ticketKey(...candidates: (string | undefined)[]): string | undef
     if (m) return m[0]
   }
   return undefined
+}
+
+// ── Plan model ──
+
+type Status = WatchPlanStep['status']
+type Todo = { content?: unknown; status?: unknown }
+
+function blank(id: string, title: string): WatchPlanStep {
+  return { id, title, status: 'pending', calls: 0, editedFiles: [], agentIds: [] }
+}
+
+// Status changes stamp startedAt on entering running and endedAt on finishing.
+function withStatus(step: WatchPlanStep, status: Status, now: number): WatchPlanStep {
+  if (step.status === status) return step
+  return {
+    ...step,
+    status,
+    startedAt: status === 'running' || status === 'done' || status === 'failed' ? (step.startedAt ?? now) : step.startedAt,
+    endedAt: status === 'done' || status === 'failed' ? (step.endedAt ?? now) : undefined,
+  }
+}
+
+const finished = (s: WatchPlanStep) => s.status === 'done' || s.status === 'failed'
+
+// With nothing running, the first unfinished step becomes the running one.
+function advance(steps: WatchPlanStep[], now: number): WatchPlanStep[] {
+  if (steps.some(s => s.status === 'running')) return steps
+  const i = steps.findIndex(s => s.status === 'pending')
+  return i < 0 ? steps : steps.map((s, j) => (j === i ? withStatus(s, 'running', now) : s))
+}
+
+const normal = (t: string) => t.replace(/^Task\s+\d+:\s*/i, '').trim().toLowerCase()
+
+function matchStep(steps: readonly WatchPlanStep[], text: string): number {
+  const t = normal(text)
+  if (!t) return -1
+  return steps.findIndex(s => {
+    const title = s.title.toLowerCase()
+    return title === t || title.startsWith(t) || t.startsWith(title)
+  })
+}
+
+function todoStatus(status: unknown): Status | undefined {
+  return status === 'completed' ? 'done' : status === 'in_progress' ? 'running' : status === 'pending' ? 'pending' : undefined
+}
+
+export function isPersistent(plan: WatchPlan | null): boolean {
+  return plan?.source === 'file' || plan?.source === 'planmode'
+}
+
+export function planFromFile(
+  parsed: ParsedPlan,
+  opts: { path: string; source: 'file' | 'planmode'; done: Set<number>; now: number; prev?: WatchPlan; branch?: string; prompt?: string },
+): WatchPlan {
+  const { now, prev } = opts
+  const known = new Map((prev?.path === opts.path ? prev.steps : []).map(s => [s.id, s]))
+  const anyRunningBefore = [...known.values()].some(s => s.status === 'running')
+  let steps = parsed.steps.map(p => {
+    const before = known.get(p.id)
+    const extras = (before?.substeps ?? []).filter(x => !p.substeps.some(y => y.title === x.title))
+    const base: WatchPlanStep = { ...(before ?? blank(p.id, p.title)), title: p.title, substeps: [...p.substeps, ...extras] }
+    const num = Number(/^task-(\d+)$/.exec(p.id)?.[1])
+    const allChecked = p.substeps.length > 0 && p.substeps.every(x => x.done)
+    if (opts.done.has(num) || allChecked) return withStatus(base, 'done', now)
+    return base
+  })
+  if (anyRunningBefore || steps.some(finished)) {
+    // A running step that is now done hands over to the next one.
+    steps = advance(steps, now)
+  }
+  const title = parsed.title || prev?.title || 'Plan'
+  return {
+    source: opts.source,
+    title,
+    ticket: ticketKey(title, opts.branch, opts.prompt),
+    path: opts.path,
+    steps,
+    startedAt: prev?.path === opts.path ? prev.startedAt : now,
+    endedAt: undefined,
+  }
+}
+
+export function mergeTodos(plan: WatchPlan | null, todos: readonly Todo[], now: number, prompt?: string): WatchPlan {
+  const items = todos.filter((t): t is { content: string; status?: unknown } => typeof t.content === 'string')
+  if (plan && isPersistent(plan)) {
+    let steps = plan.steps
+    const extras: { title: string; done: boolean }[] = []
+    for (const todo of items) {
+      const i = matchStep(steps, todo.content)
+      const status = todoStatus(todo.status)
+      if (i < 0) {
+        extras.push({ title: todo.content, done: status === 'done' })
+        continue
+      }
+      if (status === 'done' || status === 'running') steps = steps.map((s, j) => (j === i ? withStatus(s, status, now) : s))
+    }
+    if (steps.some(finished)) steps = advance(steps, now)
+    const r = steps.findIndex(s => s.status === 'running')
+    if (r >= 0 && extras.length) {
+      steps = steps.map((s, j) => {
+        if (j !== r) return s
+        const subs = [...(s.substeps ?? [])]
+        for (const x of extras) {
+          const k = subs.findIndex(y => y.title === x.title)
+          if (k >= 0) subs[k] = x
+          else subs.push(x)
+        }
+        return { ...s, substeps: subs }
+      })
+    }
+    return { ...plan, steps }
+  }
+  const known = new Map((plan?.steps ?? []).map(s => [s.title, s]))
+  const steps = items.map(t => withStatus(known.get(t.content) ?? blank(`todo-${t.content}`, t.content), todoStatus(t.status) ?? 'pending', now))
+  return {
+    source: 'todo',
+    title: plan?.title ?? (prompt ? firstLine(prompt) : 'Todo list'),
+    ticket: plan?.ticket ?? ticketKey(prompt),
+    steps,
+    startedAt: plan?.startedAt ?? now,
+  }
+}
+
+export function taskEvent(plan: WatchPlan | null, ev: { id: string; title: string; done: boolean }, now: number): WatchPlan {
+  if (plan && isPersistent(plan)) {
+    const i = matchStep(plan.steps, ev.title)
+    if (i < 0) return plan
+    return { ...plan, steps: plan.steps.map((s, j) => (j === i ? withStatus(s, ev.done ? 'done' : 'running', now) : s)) }
+  }
+  const base: WatchPlan = plan && plan.source === 'task' ? plan : { source: 'task', title: plan?.title ?? 'Tasks', ticket: plan?.ticket, steps: [], startedAt: plan?.startedAt ?? now }
+  const id = `task:${ev.id}`
+  let steps = base.steps.some(s => s.id === id) ? base.steps : [...base.steps, blank(id, ev.title)]
+  if (ev.done) steps = steps.map(s => (s.id === id ? withStatus(s, 'done', now) : s))
+  return { ...base, steps: advance(steps, now) }
+}
+
+function firstLine(text: string): string {
+  const line = text.split('\n').find(l => l.trim()) ?? ''
+  const t = line.trim()
+  return t.length > 80 ? `${t.slice(0, 79)}…` : t
+}
+
+export function promptPlan(prompt: string, now: number, branch?: string): WatchPlan {
+  const title = firstLine(prompt)
+  return { source: 'prompt', title, ticket: ticketKey(title, branch, prompt), steps: [], startedAt: now }
+}
+
+export type PlanEvent =
+  | { kind: 'call' }
+  | { kind: 'edit'; file: string }
+  | { kind: 'test'; result: WatchTestResult }
+  | { kind: 'agent'; id: string }
+
+export function attribute(plan: WatchPlan, ev: PlanEvent): WatchPlan {
+  const i = plan.steps.findIndex(s => s.status === 'running')
+  if (i < 0) return plan
+  const steps = plan.steps.map((s, j) => {
+    if (j !== i) return s
+    switch (ev.kind) {
+      case 'call':
+        return { ...s, calls: s.calls + 1 }
+      case 'edit':
+        return s.editedFiles.includes(ev.file) ? s : { ...s, editedFiles: [...s.editedFiles, ev.file] }
+      case 'test':
+        return { ...s, lastTest: ev.result }
+      case 'agent':
+        return s.agentIds.includes(ev.id) ? s : { ...s, agentIds: [...s.agentIds, ev.id] }
+    }
+  })
+  return { ...plan, steps }
+}
+
+// A step Claude moved past with red tests is failed; a plan with nothing left is ended.
+export function settle(plan: WatchPlan, now: number): WatchPlan {
+  const steps = plan.steps.map(s => (s.status === 'done' && s.lastTest && !s.lastTest.ok ? { ...s, status: 'failed' as const } : s))
+  const over = steps.length > 0 && steps.every(finished)
+  return { ...plan, steps, endedAt: over ? (plan.endedAt ?? now) : undefined }
+}
+
+export function planProgress(plan: WatchPlan): { done: number; total: number; remainingMs?: number; current?: WatchPlanStep } {
+  const total = plan.steps.length
+  const done = plan.steps.filter(finished).length
+  const current = plan.steps.find(s => s.status === 'running')
+  const durations = plan.steps.filter(s => finished(s) && s.startedAt !== undefined && s.endedAt !== undefined).map(s => s.endedAt! - s.startedAt!)
+  if (durations.length === 0 || done === total) return { done, total, current }
+  const sorted = [...durations].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  const typical = sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2
+  return { done, total, remainingMs: (total - done) * typical, current }
 }

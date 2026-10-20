@@ -106,6 +106,33 @@ export function Row(k: Kit, left: unknown, right: string, valueWidth = 7) {
   )
 }
 
+// Small section heading: uppercase, dim, bold.
+export function SectionLabel(k: Kit, text: string) {
+  const { Text } = k.els
+  return (
+    <Text dimColor bold>
+      {text.toUpperCase()}
+    </Text>
+  )
+}
+
+// A fixed-width gauge with an optional tick at `mark` (0..1), e.g. a warning level.
+export function MiniBar(k: Kit, key: string, fraction: number, sem: Semantic, mark?: number, cells = 10) {
+  const { Text, Svg, Raster } = k.els
+  const f = Math.max(0, Math.min(1, fraction))
+  if (hasSvg(k)) {
+    const w = cells * 7
+    const tick = mark !== undefined ? `<rect x="${Math.round(mark * w)}" y="0" width="1" height="8" fill="#8b949e"/>` : ''
+    const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="8" viewBox="0 0 ${w} 8"><rect y="2" width="${w}" height="4" rx="2" fill="${TRACK_CSS}"/><rect y="2" width="${Math.round(f * w)}" height="4" rx="2" fill="${css(sem, k.cfg)}"/>${tick}</svg>`
+    return <Svg source={source} alt={`${Math.round(f * 100)}%`} />
+  }
+  if (hasRaster(k)) {
+    const g = raster.bar(f, cells, hex(sem, k.cfg), TRACK_HEX)
+    return <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
+  }
+  return <Text color={resolve(sem, k.cfg)}>{textBar(f, cells, k.cfg.barStyle)}</Text>
+}
+
 export function Mark(k: Kit, glyph: string, sem: Semantic) {
   const { Text } = k.els
   return <Text color={resolve(sem, k.cfg)}>{glyph}</Text>

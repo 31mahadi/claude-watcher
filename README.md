@@ -41,6 +41,7 @@ claude --plugin-dir ./claude-watcher
 | `/watch reset [history\|config\|all]` | Clear duration history and/or settings |
 | `/watch export` | Copy the last turn as JSON and print it |
 | `/watch mute 30m` / `/watch unmute` | Silence or restore alerts |
+| `/watch clear [history\|plan\|all]` | Empty the history, dismiss the plan (✕ on the plan card does the same), or both |
 
 ## Dashboard
 
@@ -67,7 +68,7 @@ With a plan file active, todos are matched to its tasks by title; extra todos be
 
 Every tool call, edited file, test result and subagent is credited to the step running at that moment.
 
-- **History** (pinned at the bottom): every turn of the session, newest first, as one collapsed row each — time, prompt, duration, calls, tests, files, permission waits. Press a row to expand it: steps it moved, its calls with times and ✓/✗, files edited, test result with failure output, agents. Compactions, model switches, stop errors and plan loads appear between turns. A filter cycles `all` → `turns` → `problems`. The last 20 turns are kept per session and survive `/clear` and resume.
+- **History** (pinned at the bottom): every turn of the session, newest first, as one collapsed row each — time, prompt, duration, calls, tests, files, permission waits. Press a row to expand it: steps it moved, its calls with times and ✓/✗, files edited, test result with failure output, agents. Compactions, model switches, stop errors and plan loads appear between turns. A filter cycles `all` → `turns` → `problems`, and `[clear]` empties it. The last 20 turns are kept per session and survive `/clear` and resume.
 
 Detail views: `/watch plan` (every step with its calls, files, tests and failure output), `/watch agents`, `/watch calls`, `/watch history` (every turn expanded), `/watch sessions`, `/watch health`, `/watch config`.
 

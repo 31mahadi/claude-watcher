@@ -52,7 +52,9 @@ export function parseDuration(raw: string): number | undefined {
 export function toolLabel(tool: string, input: Record<string, unknown>, cfg: WatchConfig): string {
   if (cfg.redactCommands) return tool
   const pick = (k: string) => (typeof input[k] === 'string' ? (input[k] as string) : undefined)
+  // A Bash call's own description reads better than a raw shell line.
   const detail =
+    (tool === 'Bash' ? pick('description') : undefined) ??
     pick('command') ??
     pick('description') ??
     (pick('file_path') ? basename(pick('file_path')!) : undefined) ??

@@ -178,6 +178,14 @@ async function logEvent($: $, icon: 'compact' | 'model' | 'error' | 'plan', text
   await saveLog($)
 }
 
+// Drop the plan; reading or editing its file again brings it back.
+async function dismissPlan($: $): Promise<void> {
+  const s = await read($, snap)
+  if (s.plan?.path) planTexts.delete(s.plan.path)
+  await update($, snap, x => ({ ...x, plan: null }))
+  if (s.sessionId) await $.store.delete(`plan:${s.sessionId}`)
+}
+
 async function restorePlan($: $, sessionId: string): Promise<void> {
   const stored = (await $.store.get(`plan:${sessionId}`)) as WatchPlan | undefined
   if (!stored || !Array.isArray(stored.steps)) return
@@ -362,7 +370,7 @@ export const register: Register = on => {
       await $.command.register({
         name: 'watch',
         description: 'Claude Watcher: toggle the dashboard, or /watch <tab|config|reset|export|mute|sessions>',
-        argumentHint: '[turn|plan|agents|sessions|health|config|reset|export|mute <30m>]',
+        argumentHint: '[turn|plan|agents|calls|history|sessions|health|config|clear [history|plan]|reset|export|mute <30m>]',
       })
       await refreshGit($).catch(() => undefined)
       await startBeat($)
@@ -735,6 +743,15 @@ export const register: Register = on => {
       const copied = await $.ui.copy({ text: json }).catch(() => ({ isCopied: false }))
       return { text: `${copied.isCopied ? 'Copied to clipboard.\n' : ''}\`\`\`json\n${json}\n\`\`\`` }
     }
+    if (verb === 'clear') {
+      const what = arg || 'all'
+      if (what === 'history' || what === 'all') {
+        await update($, snap, s => ({ ...s, history: [] }))
+        await saveLog($)
+      }
+      if (what === 'plan' || what === 'all') await dismissPlan($)
+      return { text: `Watcher: ${what === 'all' ? 'history and plan' : what} cleared.` }
+    }
     if (verb === 'mute') {
       const ms = parseDuration(arg || '30m')
       if (ms === undefined) return { text: 'Usage: /watch mute 30m' }
@@ -771,6 +788,12 @@ export const register: Register = on => {
             const open = u.expanded ?? []
             return { ...u, expanded: open.includes(id) ? open.filter(x => x !== id) : [...open, id].slice(-50) }
           }),
+        clearHistory: () =>
+          void (async () => {
+            await update($, snap, s => ({ ...s, history: [] }))
+            await saveLog($)
+          })(),
+        dismissPlan: () => void dismissPlan($),
         cycleFilter: () =>
           void update($, ui, (u): WatchUi => ({ ...u, historyFilter: u.historyFilter === 'all' ? 'turns' : u.historyFilter === 'turns' ? 'problems' : 'all' })),
         set: (path, value) => void setConfig($, path, value),

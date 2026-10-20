@@ -5,7 +5,7 @@ import { estimateMs } from '../estimate'
 import { planProgress } from '../plan'
 import { ago, basename, pct, seconds, time, truncate } from '../format'
 import { resolve, type Semantic } from './colors'
-import { Bar, Card, Donut, Gantt, inner, Mark, Pulse, Row, Sparkline, type GanttLane, type Kit } from './widgets'
+import { Bar, Card, Donut, Gantt, inner, Mark, MiniBar, Pulse, Row, SectionLabel, Sparkline, type GanttLane, type Kit } from './widgets'
 
 export type View = {
   k: Kit
@@ -21,6 +21,8 @@ export type View = {
     copy: (text: string) => void
     toggle: (id: string) => void
     cycleFilter: () => void
+    clearHistory: () => void
+    dismissPlan: () => void
   }
 }
 
@@ -143,7 +145,7 @@ export function Pane(v: View) {
 
 const STALL_MS = 90_000
 const DONE_SHOWN = 6
-const PENDING_SHOWN = 4
+const PENDING_SHOWN = 2
 
 function Dashboard(v: View) {
   const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
@@ -203,7 +205,7 @@ function planSem(v: View, plan: WatchPlan): Semantic {
 
 function planHeader(v: View, plan: WatchPlan) {
   const { k } = v
-  const { Box, Text } = k.els
+  const { Box, Text, Button } = k.els
   const active = isActive(v.s)
   const sem = planSem(v, plan)
   const ticket = plan.ticket && !plan.title.includes(plan.ticket) ? plan.ticket : undefined
@@ -214,6 +216,7 @@ function planHeader(v: View, plan: WatchPlan) {
         {ticket ? <Text color={resolve('accent', k.cfg)}>{`${ticket} · `}</Text> : null}
         <Text bold>{plan.title || 'Working'}</Text>
       </Text>
+      <Button key="plan-dismiss" plain label="✕" onPress={() => v.actions.dismissPlan()} />
     </Box>
   )
 }
@@ -297,7 +300,12 @@ function stepDetail(v: View, step: WatchPlanStep, full: boolean): unknown[] {
   if (step.substeps?.length) {
     const subs = step.substeps.map(x => `${x.done ? '[x]' : '[ ]'} ${x.title}`)
     if (full) for (const x of subs) lines.push(<Text dimColor>{`${pad}${x}`}</Text>)
-    else lines.push(<Text dimColor wrap="truncate-end">{`${pad}${truncate(subs.join('  '), inner(k) * 2)}`}</Text>)
+    else {
+      const done = step.substeps.filter(x => x.done).length
+      const next = step.substeps.find(x => !x.done)
+      const text = next ? `○ next: ${next.title} · ${done} of ${step.substeps.length} done` : `✓ all ${step.substeps.length} sub-steps done`
+      lines.push(<Text dimColor wrap="truncate-end">{`${pad}${truncate(text, inner(k) - pad.length)}`}</Text>)
+    }
   }
   return lines
 }
@@ -358,7 +366,8 @@ function HealthLine(v: View) {
     items.push(
       <Box key="ctx" flexDirection="row" gap={1} alignItems="center">
         {sem ? <Text color={resolve(sem, k.cfg)}>{`ctx ${pct(hl.contextPct)}`}</Text> : <Text dimColor>{`ctx ${pct(hl.contextPct)}`}</Text>}
-        {Sparkline(k, 'ctx-trend', trend, { sem: sem ?? 'dim', cells: 20, max: 100, alt: 'context per turn' })}
+        {MiniBar(k, 'ctx-bar', hl.contextPct / 100, sem ?? 'dim', k.cfg.health.contextWarnPct / 100)}
+        {trend.length >= 3 ? Sparkline(k, 'ctx-trend', trend, { sem: sem ?? 'dim', cells: 20, max: 100, alt: 'context per turn' }) : null}
       </Box>,
     )
   }
@@ -525,12 +534,13 @@ function HistorySection(v: View, mode: 'line' | 'dashboard' | 'full') {
     const expanded = mode === 'full' || open.has(e.id)
     const sem: Semantic = isProblem(e) ? 'attention' : e.ended ? 'dim' : 'accent'
     body.push(
-      // Only the glyph is a control: surfaces draw a Button as a native chip.
+      // One line per row. Only the glyph is a control (surfaces draw Buttons as chips);
+      // a problem row gets a red edge, not red text.
       <Box key={`row-${e.id}`} flexDirection="row" gap={1}>
+        <Text color={sem === 'attention' ? resolve('attention', cfg) : undefined}>{sem === 'attention' ? '▌' : ' '}</Text>
         <Button key={`hist-${e.id}`} plain label={expanded ? '▾' : '▸'} onPress={() => v.actions.toggle(e.id)} />
-        <Text wrap="truncate-end">
-          <Text dimColor>{`${clock(e.at)}  `}</Text>
-          <Text color={sem === 'dim' ? undefined : resolve(sem, cfg)}>{turnSummary(e, number.get(e.id) ?? 0, cfg)}</Text>
+        <Text wrap="truncate-end" color={sem === 'accent' ? resolve('accent', cfg) : undefined}>
+          {truncate(`${clock(e.at)}  ${turnSummary(e, number.get(e.id) ?? 0, cfg)}`, inner(k) - 6)}
         </Text>
       </Box>,
     )
@@ -541,10 +551,15 @@ function HistorySection(v: View, mode: 'line' | 'dashboard' | 'full') {
   return (
     <Box key="history" flexDirection="column">
       <Box flexDirection="row" justifyContent="space-between">
-        <Text bold>History</Text>
-        <Button key="history-filter" plain onPress={() => v.actions.cycleFilter()}>
-          <Text dimColor>{`[${filter}]`}</Text>
-        </Button>
+        {SectionLabel(k, 'HISTORY')}
+        <Box flexDirection="row" gap={1}>
+          <Button key="history-filter" plain onPress={() => v.actions.cycleFilter()}>
+            <Text dimColor>{`[${filter}]`}</Text>
+          </Button>
+          <Button key="history-clear" plain onPress={() => v.actions.clearHistory()}>
+            <Text dimColor>[clear]</Text>
+          </Button>
+        </Box>
       </Box>
       {body}
     </Box>

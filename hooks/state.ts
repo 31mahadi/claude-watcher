@@ -18,6 +18,22 @@ export const EMPTY_SNAP: WatchSnapshot = {
   history: [],
 }
 
+// $.state outlives a reload of the mod's code: a snapshot saved by an older version
+// lacks newer fields. Fill them from the empty snapshot.
+export function normalizeSnap(raw: unknown): WatchSnapshot {
+  const s = (raw && typeof raw === 'object' ? raw : {}) as Partial<WatchSnapshot>
+  const health = { ...EMPTY_SNAP.health, ...(s.health ?? {}) }
+  return {
+    ...EMPTY_SNAP,
+    ...s,
+    recent: Array.isArray(s.recent) ? s.recent : [],
+    agents: Array.isArray(s.agents) ? s.agents : [],
+    history: Array.isArray(s.history) ? s.history : [],
+    plan: s.plan && Array.isArray(s.plan.steps) ? s.plan : null,
+    health: { ...health, editedFiles: Array.isArray(health.editedFiles) ? health.editedFiles : [], contextHistory: Array.isArray(health.contextHistory) ? health.contextHistory : [] },
+  }
+}
+
 // Reducers: pure, (snapshot, …) → snapshot.
 
 export function resetTurn(s: WatchSnapshot): WatchSnapshot {

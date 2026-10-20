@@ -354,11 +354,11 @@ export const register: Register = on => {
       await loadHistory($)
       const prev = await read($, snap)
       // A hot reload keeps $.state: carry the snapshot on for the same session.
-      await update($, snap, () => (prev.sessionId === sessionId ? { ...prev, cwd: e.cwd, model } : { ...S.EMPTY_SNAP, sessionId, cwd: e.cwd, model }))
+      await update($, snap, () => (prev.sessionId === sessionId ? { ...S.normalizeSnap(prev), cwd: e.cwd, model } : { ...S.EMPTY_SNAP, sessionId, cwd: e.cwd, model }))
       await restorePlan($, sessionId)
       await restoreLog($, sessionId)
       const cfg = await read($, config)
-      await update($, ui, u => ({ ...u, tab: prev.sessionId === sessionId ? u.tab : cfg.defaultTab }))
+      await update($, ui, u => ({ ...u, expanded: u.expanded ?? [], historyFilter: u.historyFilter ?? 'all', tab: prev.sessionId === sessionId ? u.tab : cfg.defaultTab }))
       await $.command.register({
         name: 'watch',
         description: 'Claude Watcher: toggle the dashboard, or /watch <tab|config|reset|export|mute|sessions>',
@@ -754,7 +754,7 @@ export const register: Register = on => {
     const k = await kitFor($, e, els)
     const view: View = {
       k,
-      s: await read($, snap),
+      s: S.normalizeSnap(await read($, snap)),
       ui: await read($, ui),
       peers: await read($, peers),
       history: await read($, estimates),

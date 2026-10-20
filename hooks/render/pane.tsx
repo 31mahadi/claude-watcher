@@ -110,6 +110,46 @@ export function needsYouText(s: WatchSnapshot, now: number): string {
   return `${what} (${time(now - n.since)})`
 }
 
+// five_hour → session, seven_day → weekly, seven_day_fable → fable.
+export function limitLabel(kind: string): string {
+  if (kind === 'five_hour') return 'session'
+  if (kind === 'seven_day') return 'weekly'
+  if (kind === 'spend_limit') return 'spend'
+  return kind.replace(/^(five_hour|seven_day)_/, '').replace(/_/g, ' ')
+}
+
+function resetText(at: number, now: number): string {
+  const ms = at - now
+  if (ms <= 0) return 'resetting'
+  if (ms < 86_400_000) return `resets in ${time(ms, 'human').replace(/ \d+s$/, '')}`
+  return `resets ${new Date(at).toLocaleDateString('en-US', { weekday: 'short' })}`
+}
+
+// USAGE: what /usage shows — session, weekly and per-model windows — always on top.
+function UsageBar(v: View) {
+  const { k, s, now } = v
+  const { Box, Text } = k.els
+  const limits = s.health.limits ?? []
+  if (limits.length === 0) return null
+  const order = (kind: string) => (kind === 'five_hour' ? 0 : kind === 'seven_day' ? 1 : 2)
+  const rows = [...limits]
+    .sort((a, b) => order(a.kind) - order(b.kind))
+    .map(l => {
+      const sem: Semantic = l.pct >= 90 ? 'attention' : l.pct >= 70 ? 'warn' : 'accent'
+      return (
+        <Box key={`usage-${l.kind}`} flexDirection="row" gap={1} alignItems="center">
+          <Box width={8} flexShrink={0}>
+            <Text dimColor>{limitLabel(l.kind)}</Text>
+          </Box>
+          {MiniBar(k, `usage-bar-${l.kind}`, l.pct / 100, sem, undefined, narrow(k) ? 8 : 16)}
+          <Text color={resolve(sem, k.cfg)}>{pct(l.pct)}</Text>
+          {l.resetsAt && !narrow(k) ? <Text dimColor wrap="truncate-end">{resetText(l.resetsAt, now)}</Text> : null}
+        </Box>
+      )
+    })
+  return Section(k, 'usage', 'USAGE', rows)
+}
+
 export function Pane(v: View) {
   const { Box } = v.k.els
   const gap = v.k.cfg.theme === 'dense' ? 0 : 1
@@ -119,6 +159,7 @@ export function Pane(v: View) {
     const compact = v.k.cfg.compact || v.k.columns < COMPACT_BELOW
     return (
       <Box flexDirection="column" height={v.k.rows}>
+        {UsageBar(v)}
         <Box key="now" flexDirection="column" gap={gap} borderStyle="round" borderColor={STATE_HEX[nowSem(v)]} paddingX={1}>
           {NowBlock(v, compact)}
         </Box>
@@ -152,6 +193,7 @@ export function Pane(v: View) {
                     : ConfigDetail(v)
   return (
     <Box flexDirection="column" gap={gap}>
+      {UsageBar(v)}
       {detail}
       {Footer(v)}
     </Box>

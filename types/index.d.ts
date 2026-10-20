@@ -56,6 +56,8 @@ export type WatchHealth = {
   contextTokens?: number
   costUsd?: number
   rateLimitPct?: number
+  // Each usage window the status line reports: five_hour, seven_day, seven_day_<model>.
+  limits?: { kind: string; pct: number; resetsAt?: number }[]
   compactions: number
   lastCompactAt?: number
   lastError?: { kind: string; text?: string; at: number }

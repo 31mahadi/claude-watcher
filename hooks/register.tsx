@@ -833,7 +833,7 @@ export const register: Register = on => {
       const rate = e.rateLimits.length ? Math.max(...e.rateLimits.map(r => r.percentUsed)) : undefined
       await update($, snap, s => ({
         ...s,
-        health: { ...s.health, contextPct: pct, contextTokens: ctx.tokens, costUsd: e.cost?.usd ?? s.health.costUsd, rateLimitPct: rate },
+        health: { ...s.health, contextPct: pct, contextTokens: ctx.tokens, costUsd: e.cost?.usd ?? s.health.costUsd, rateLimitPct: rate, limits: e.rateLimits.map(r => ({ kind: r.kind, pct: r.percentUsed, resetsAt: r.resetsAt ? Date.parse(r.resetsAt) || undefined : undefined })) },
       }))
     })
     return next(e)

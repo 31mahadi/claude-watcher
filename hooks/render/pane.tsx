@@ -205,7 +205,16 @@ function Footer(v: View) {
           ]}
           onSelect={(value: string) => v.actions.filter(value)}
         />
-        {open.length ? <Select key="open" label="open…" options={open.map(o => ({ value: o.value, label: o.label }))} onSelect={(value: string) => v.actions.pick(value)} /> : null}
+        {open.length ? (
+          // A blank first choice: a Select shows its value, and re-picking the shown one fires nothing.
+          <Select
+            key="open"
+            label="open…"
+            value=""
+            options={[{ value: '', label: 'choose…' }, ...open.map(o => ({ value: o.value, label: o.label }))]}
+            onSelect={(value: string) => (value ? v.actions.pick(value) : undefined)}
+          />
+        ) : null}
       </Box>
     </Box>
   )

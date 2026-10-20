@@ -152,6 +152,7 @@ async function loadPlanFile($: $, path: string, source: 'file' | 'planmode', for
   })
   await savePlan($)
   if (wasPath !== path) await logEvent($, 'plan', `plan loaded: ${parsed.title || 'plan'} (${parsed.steps.length} steps)`)
+  await notePlanFinished($)
 }
 
 async function refreshPlanFile($: $): Promise<void> {
@@ -167,6 +168,17 @@ async function savePlan($: $): Promise<void> {
 // ── Changes, checks, badge, open menu ──
 
 let editsSinceRefresh = false
+// The finished plan already logged, so its event is written once.
+let finishedLogged = ''
+
+async function notePlanFinished($: $): Promise<void> {
+  const plan = (await read($, snap)).plan
+  if (!plan || !plan.endedAt || plan.source === 'prompt' || plan.steps.length === 0) return
+  const id = `${plan.path ?? plan.title}:${plan.startedAt}`
+  if (finishedLogged === id) return
+  finishedLogged = id
+  await logEvent($, 'plan', `plan finished · ${plan.title} · ${plan.steps.length} steps · ${time(plan.endedAt - plan.startedAt, 'human')}`)
+}
 let lastBadge = -1
 
 async function setGitBase($: $): Promise<void> {
@@ -231,6 +243,11 @@ async function updateBadge($: $): Promise<void> {
 }
 
 async function openPick($: $, value: string, surface: string): Promise<void> {
+  if (value === 'clear-plan') return dismissPlan($)
+  if (value === 'clear-history') {
+    await update($, snap, x => ({ ...x, history: [] }))
+    return saveLog($)
+  }
   const s = await read($, snap)
   const cwd = s.cwd || (await $.session.cwd())
   const failing = failingLocation(s.health.lastTest && !s.health.lastTest.ok ? s.health.lastTest.snippet : undefined, cwd)
@@ -510,7 +527,8 @@ export const register: Register = on => {
       const goal = truncate(e.text.split('\n').find(l => l.trim()) ?? '', 80) || undefined
       await update($, snap, s => {
         const started = { ...S.startTurn(s, now, goal), history: H.startTurnEntry(s.history ?? [], e.turnId, now, e.text) }
-        return isPersistent(s.plan) ? started : { ...started, plan: promptPlan(e.text, now, s.branch) }
+        // A finished plan gives way to the new turn; an unfinished file plan stays.
+        return isPersistent(s.plan) && !s.plan?.endedAt ? started : { ...started, plan: promptPlan(e.text, now, s.branch) }
       })
       const cfg = await read($, config)
       startTicker($)
@@ -540,6 +558,7 @@ export const register: Register = on => {
         return { ...ended, plan, history, health: { ...ended.health, contextHistory } }
       })
       await savePlan($)
+      await notePlanFinished($)
       await saveLog($)
       await refreshChanges($).catch(() => undefined)
       await updateBadge($)
@@ -651,6 +670,7 @@ export const register: Register = on => {
         return { ...s, plan: settle(plan, now) }
       })
       if (edited) editsSinceRefresh = true
+      await notePlanFinished($)
       await updateBadge($)
       if (ok && filePath && /^(Read|Edit|Write|MultiEdit)$/.test(e.tool)) {
         const looksLikePlan = isPlanPath(filePath) || (e.tool === 'Read' && /Implementation Plan\s*$/m.test(output.split('\n').slice(0, 3).join('\n')))

@@ -73,8 +73,10 @@ view ▾   history ▾   open… ▾
 - **Agents**: one swimlane chart for the main loop and every subagent.
 - **History**: one line per turn and session event, newest first.
 - **Idle**: when nothing runs, everything above collapses to one line, `Idle · last turn 2:11 · 16 calls · tests ✓ · 2 files`, plus history.
-- **Footer**: `view` switches between the dashboard and detail views, `history` filters history (all, turns, problems), `open…` opens the plan file, the failing test at its line, or a changed file in VS Code (`code -g`; the path is copied when `code` isn't available), or copies the resume command.
+- **Footer**: `view` switches between the dashboard and detail views, `history` filters history (all, turns, problems), `actions…` opens the plan file, the failing test at its line, or a changed file in VS Code (`code -g`; the path is copied when `code` isn't available), or copies the resume command; it also has `clear plan` and `clear history`.
 - **Badge**: the pane's tab reads `Watcher · 1` while something needs you.
+
+When every step of a plan is done it shows `✓ all N steps done`, history records `plan finished`, and the plan clears itself when the next turn starts.
 
 ### Where the plan comes from
 

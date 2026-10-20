@@ -188,6 +188,11 @@ function Footer(v: View) {
   const cwd = s.cwd
   const failing = failingLocation(s.health.lastTest && !s.health.lastTest.ok ? s.health.lastTest.snippet : undefined, cwd)
   const open = openOptions({ planPath: s.plan?.path, failing, changes: s.health.changes ?? [], sessionId: s.sessionId })
+  const actions = [
+    ...open.map(o => ({ value: o.value, label: o.label })),
+    ...(s.plan && s.plan.source !== 'prompt' ? [{ value: 'clear-plan', label: 'clear plan' }] : []),
+    ...((s.history ?? []).length ? [{ value: 'clear-history', label: 'clear history' }] : []),
+  ]
   return (
     <Box key="footer" flexDirection="column">
       {rule}
@@ -204,13 +209,13 @@ function Footer(v: View) {
           ]}
           onSelect={(value: string) => v.actions.filter(value)}
         />
-        {open.length ? (
+        {actions.length ? (
           // A blank first choice: a Select shows its value, and re-picking the shown one fires nothing.
           <Select
             key="open"
-            label="open…"
+            label="actions…"
             value=""
-            options={[{ value: '', label: 'choose…' }, ...open.map(o => ({ value: o.value, label: o.label }))]}
+            options={[{ value: '', label: 'choose…' }, ...actions]}
             onSelect={(value: string) => (value ? v.actions.pick(value) : undefined)}
           />
         ) : null}

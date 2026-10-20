@@ -69,6 +69,8 @@ export type WatchHealth = {
   contextHistory: number[]
   // Commit the session started from, and what changed since.
   gitBase?: string
+  // The repo's top directory: numstat paths are relative to it.
+  gitRoot?: string
   changes: WatchChange[]
   changesAt?: number
   // Each test/lint/build command's recent runs, by check key.

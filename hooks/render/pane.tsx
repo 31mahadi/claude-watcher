@@ -212,7 +212,8 @@ function Dashboard(v: View) {
   const attention = AttentionCard(v)
   // Idle: nothing running and nothing to act on → one line, then history.
   if (!isActive(v.s) && !attention && !compact) {
-    return [IdleLine(v), IdlePlan(v), HistorySection(v, 'dashboard')].filter(Boolean)
+    // What changed and how checks fared matter most right after a turn ends.
+    return [IdleLine(v), IdlePlan(v), ChangesSection(v), ChecksSection(v), HistorySection(v, 'dashboard')].filter(Boolean)
   }
   if (compact) return [attention, PlanSection(v, true), ContextSection(v)].filter(Boolean)
   return [attention, PlanSection(v, false), ChangesSection(v), ChecksSection(v), ContextSection(v), TimelineSection(v), HistorySection(v, 'dashboard')].filter(Boolean)
@@ -523,7 +524,7 @@ function ChecksSection(v: View, all = false) {
         <Box flexGrow={1} flexShrink={1}>
           <Text wrap="truncate-end">{fit(k, c.command, inner(k) - 30)}</Text>
         </Box>
-        <Text>
+        <Text wrap="truncate-end">
           {c.runs.slice(-5).map((r, i) => (
             <Text color={resolve(r.ok ? 'ok' : 'attention', k.cfg)}>{`${i ? ' ' : ''}${r.ok ? '✓' : '✗'}`}</Text>
           ))}

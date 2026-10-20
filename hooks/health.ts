@@ -2,7 +2,8 @@ import type { WatchTestResult } from '../types'
 
 type Parsed = Omit<WatchTestResult, 'at' | 'command'>
 
-const num = (m: RegExpMatchArray | null, i = 1) => (m ? Number(m[i]) : 0)
+// An absent group ("Tests: 11 passed" has no failed count) is 0, not NaN.
+const num = (m: RegExpMatchArray | null, i = 1) => (m && m[i] !== undefined ? Number(m[i]) : 0)
 
 // Best-effort parse of common test runners' summaries. Returns undefined when the
 // command does not look like a test run.
@@ -59,11 +60,23 @@ export function failureSnippet(text: string, maxLines = 12): string {
   return lines.slice(from, from + maxLines).join('\n').trim()
 }
 
+const PM = '(?:npm|pnpm|yarn|bun)(?: run)?'
+const TEST = new RegExp(`^(?:(?:npx|bunx|pnpm|yarn|bun)\\s+)?(?:jest|vitest|mocha|pytest|py\\.test|rspec|phpunit)\\b|^${PM} test\\b|^(?:go|cargo|deno|make|bun|claude plugin) test\\b`)
+const LINT = new RegExp(`^${PM} lint\\b|^(?:(?:npx|pnpm|bunx)\\s+)?(?:eslint|ruff|flake8|golangci-lint|biome check|prettier --check)\\b|^cargo clippy\\b|^(?:npx\\s+)?tsc\\b.*--noemit`)
+const BUILD = new RegExp(`^${PM} build\\b|^(?:cargo|go) build\\b|^(?:npx\\s+)?(?:tsc|webpack|vite build|next build)\\b|^make\\b`)
+
+// What kind of check a shell line runs, judged by each command's own words:
+// quoted text, comments, `cd` and env assignments do not count.
 export function classifyCommand(command: string): 'test' | 'lint' | 'build' | undefined {
-  const c = command.toLowerCase()
-  if (/\b(test|jest|vitest|pytest|mocha|rspec|phpunit)\b/.test(c)) return 'test'
-  if (/\b(lint|eslint|ruff|flake8|clippy|golangci|tsc --noemit|biome check|prettier --check)\b/.test(c)) return 'lint'
-  if (/\b(build|tsc|webpack|vite build|cargo build|go build|make)\b/.test(c)) return 'build'
+  const bare = command
+    .toLowerCase()
+    .replace(/(["'])(?:\\.|(?!\1).)*\1/g, ' ')
+    .replace(/(^|\s)#.*$/gm, ' ')
+  const segments = bare.split(/&&|\|\||;|\|/).map(x => x.trim().replace(/^(?:\w+=\S*\s+)+/, ''))
+  const runs = segments.filter(x => x && !/^cd\b/.test(x))
+  if (runs.some(x => TEST.test(x))) return 'test'
+  if (runs.some(x => LINT.test(x))) return 'lint'
+  if (runs.some(x => BUILD.test(x))) return 'build'
   return undefined
 }
 

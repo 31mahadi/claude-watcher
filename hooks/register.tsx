@@ -171,9 +171,11 @@ let lastBadge = -1
 
 async function setGitBase($: $): Promise<void> {
   const cwd = (await read($, snap)).cwd || (await $.session.cwd())
-  const run = await $.process.run(['git', 'rev-parse', 'HEAD'], { cwd, timeoutMs: 2000 }).catch(() => undefined)
-  const base = run && run.exitCode === 0 ? run.stdout.trim() : undefined
-  await update($, snap, s => ({ ...s, health: { ...s.health, gitBase: base || undefined, changes: base ? s.health.changes : [] } }))
+  const run = await $.process.run(['git', 'rev-parse', '--show-toplevel', 'HEAD'], { cwd, timeoutMs: 2000 }).catch(() => undefined)
+  const lines = run && run.exitCode === 0 ? run.stdout.split('\n').map(l => l.trim()).filter(Boolean) : []
+  const base = lines[lines.length - 1]
+  const root = lines.length > 1 ? lines[0] : cwd
+  await update($, snap, s => ({ ...s, health: { ...s.health, gitBase: base || undefined, gitRoot: base ? root : undefined, changes: base ? s.health.changes : [] } }))
 }
 
 // Diff against the session's starting commit; a run over 2s is dropped and retried later.
@@ -183,7 +185,7 @@ async function refreshChanges($: $): Promise<void> {
   if (!base) return
   const cwd = s.cwd || (await $.session.cwd())
   const numstat = await $.process.run(['git', 'diff', '--numstat', base], { cwd, timeoutMs: 2000 }).catch(() => undefined)
-  const others = await $.process.run(['git', 'ls-files', '--others', '--exclude-standard'], { cwd, timeoutMs: 2000 }).catch(() => undefined)
+  const others = await $.process.run(['git', 'ls-files', '--others', '--exclude-standard', '--full-name'], { cwd, timeoutMs: 2000 }).catch(() => undefined)
   if (!numstat || numstat.exitCode !== 0) return
   const edited = new Map<string, number>()
   let turn = 0
@@ -192,7 +194,8 @@ async function refreshChanges($: $): Promise<void> {
     turn += 1
     for (const f of e.files) edited.set(f, turn)
   }
-  const changes = changesFromGit(numstat.stdout, others && others.exitCode === 0 ? others.stdout : '', edited, cwd)
+  // numstat and --full-name paths are relative to the repo's top, not the session's cwd.
+  const changes = changesFromGit(numstat.stdout, others && others.exitCode === 0 ? others.stdout : '', edited, s.health.gitRoot ?? cwd)
   const now = await $.clock.now()
   await update($, snap, x => ({ ...x, health: { ...x.health, changes, changesAt: now } }))
   editsSinceRefresh = false
@@ -238,7 +241,8 @@ async function openPick($: $, value: string, surface: string): Promise<void> {
     $.ui.toast(res.isCopied ? `Copied ${what}: ${text}` : text)
   }
   if (option.action.kind === 'copy') return copy(option.action.text, 'command')
-  const path = option.action.path.startsWith('/') ? option.action.path : `${cwd.replace(/\/+$/, '')}/${option.action.path}`
+  const root = (s.health.gitRoot ?? cwd).replace(/\/+$/, '')
+  const path = option.action.path.startsWith('/') ? option.action.path : `${root}/${option.action.path}`
   const target = option.action.line ? `${path}:${option.action.line}` : path
   const run = await $.process.run(['code', '-g', target], { cwd, timeoutMs: 3000 }).catch(() => undefined)
   if (!run || run.exitCode !== 0) await copy(path, 'path')
@@ -399,6 +403,9 @@ async function openPane($: $, tab?: WatchTab) {
   if (tab) await setTab($, tab)
   const opened = await $.ui.open({ id: S.PANE, title: TITLE })
   startTicker($)
+  // The open just reset the tab title; put the badge back.
+  lastBadge = -1
+  await updateBadge($)
   return opened
 }
 
@@ -601,11 +608,11 @@ export const register: Register = on => {
         }
         const key = kind ? checkKey(input.command, (await read($, snap)).cwd) : ''
         if (key) {
-          const command = input.command
+          const label = call.label
           const t = patch.lastTest
           const turns = ((await read($, snap)).history ?? []).filter(x => x.kind === 'turn').length
           const runOk = t ? t.ok : ok
-          await update($, snap, x => ({ ...x, health: { ...x.health, checks: recordCheck(x.health.checks ?? {}, key, command, { ok: runOk, at: now, passed: t?.passed, failed: t?.failed, snippet: t?.snippet, turn: turns }) } }))
+          await update($, snap, x => ({ ...x, health: { ...x.health, checks: recordCheck(x.health.checks ?? {}, key, label, { ok: runOk, at: now, passed: t?.passed, failed: t?.failed, snippet: t?.snippet, turn: turns }) } }))
           await saveChecks($)
         }
       }

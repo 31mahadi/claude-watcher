@@ -39,7 +39,7 @@ export function Bar(k: Kit, key: string, fraction: number, sem: Semantic, label:
   const width = Math.max(6, inner(k) - label.length - 1)
   let bar
   if (hasSvg(k)) {
-    bar = <Svg source={svg.bar(fraction, css(sem, k.cfg), TRACK_CSS, width * 8, 6)} alt={textBar(fraction, width, 'ascii')} width={width} height={1} />
+    bar = <Svg source={svg.bar(fraction, css(sem, k.cfg), TRACK_CSS, width * 7, 6)} alt={textBar(fraction, width, 'ascii')} />
   } else if (hasRaster(k)) {
     const g = raster.bar(fraction, width, hex(sem, k.cfg), TRACK_HEX)
     bar = <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
@@ -114,7 +114,8 @@ export function Mark(k: Kit, glyph: string, sem: Semantic) {
 // The one motion: a Client pulse where the surface has Client, a still dot elsewhere.
 export function Pulse(k: Kit, sem: Semantic) {
   const { Client, Text } = k.els
-  if (k.cfg.animations && Client) return <Client key="pulse" module="../client/pulse.ts" props={{ color: resolve(sem, k.cfg) }} width={1} />
+  // Client runs on the terminal and Desktop only; VS Code gets a still dot.
+  if (k.cfg.animations && Client && (k.surface === 'terminal' || k.surface === 'desktop')) return <Client key="pulse" module="../client/pulse.ts" props={{ color: resolve(sem, k.cfg) }} width={1} />
   return <Text color={resolve(sem, k.cfg)}>●</Text>
 }
 
@@ -122,7 +123,7 @@ export function Sparkline(k: Kit, key: string, values: readonly number[]) {
   const { Text, Svg, Raster } = k.els
   if (!k.cfg.visuals.sparkline || values.length < 3) return null
   const width = Math.min(inner(k), 40)
-  if (hasSvg(k)) return <Svg source={svg.sparkline(values, css('accent', k.cfg), width * 8, 16)} alt="call durations" width={width} height={1} />
+  if (hasSvg(k)) return <Svg source={svg.sparkline(values, css('accent', k.cfg), width * 7, 18)} alt="call durations" />
   if (hasRaster(k)) {
     const g = raster.sparkline(values.slice(-width), hex('accent', k.cfg))
     return <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
@@ -134,7 +135,7 @@ export function Sparkline(k: Kit, key: string, values: readonly number[]) {
 export function Donut(k: Kit, fraction: number, sem: Semantic) {
   const { Text, Svg } = k.els
   if (k.cfg.visuals.contextDonut && hasSvg(k)) {
-    return <Svg source={svg.donut(fraction, css(sem, k.cfg), TRACK_CSS)} alt={`${Math.round(fraction * 100)}%`} width={6} height={3} />
+    return <Svg source={svg.donut(fraction, css(sem, k.cfg), TRACK_CSS)} alt={`${Math.round(fraction * 100)}%`} />
   }
   return <Text color={resolve(sem, k.cfg)}>{textBar(fraction, 10, k.cfg.barStyle)}</Text>
 }
@@ -150,7 +151,7 @@ export function Gantt(k: Kit, key: string, lanes: readonly GanttLane[], from: nu
       lanes.map(l => ({ label: l.label, start: l.start, end: l.end, color: css(l.sem, k.cfg), outline: l.failed ? css('attention', k.cfg) : undefined })),
       from,
       to,
-      width * 8,
+      width * 7,
       90,
     )
     return <Svg source={source} alt={lanes.map(l => l.label).join(', ')} width={width} height={lanes.length + 1} />

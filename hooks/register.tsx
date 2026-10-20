@@ -116,7 +116,6 @@ async function tickOnce($: $) {
   const open = await isPaneOpen($)
   await update($, ui, u => ({ ...u, tick: u.tick + 1 }))
   if (open && cfg.sessions.shareState && (await read($, ui)).tab === 'sessions') {
-    await update($, peers, () => [])
     const now = await $.clock.now()
     const list = await readPeers($, now)
     await update($, peers, () => list)
@@ -125,14 +124,24 @@ async function tickOnce($: $) {
   if (!active && !open && !cfg.idleTimer) stopTicker()
 }
 
-function startTicker($: $) {
-  if (stopTick) return
-  stopTick = $.clock.every(1000, () => void tickOnce($).catch(() => undefined))
+// One 1s timer, created in session.start: timers started inside a short
+// dispatch (turn.start, command.run) do not reliably outlive it. While idle
+// with the pane closed the timer does nothing, so no state is written.
+let isTicking = false
+
+function installTicker($: $) {
+  stopTick?.cancel()
+  stopTick = $.clock.every(1000, () => {
+    if (isTicking) void tickOnce($).catch(() => undefined)
+  })
+}
+
+function startTicker(_$: $) {
+  isTicking = true
 }
 
 function stopTicker() {
-  stopTick?.cancel()
-  stopTick = undefined
+  isTicking = false
 }
 
 async function beat($: $, endedAt?: number) {
@@ -217,6 +226,7 @@ export const register: Register = on => {
       await refreshGit($).catch(() => undefined)
       await startBeat($)
       await beat($)
+      installTicker($)
       if (await isPaneOpen($)) startTicker($)
     })
     return result

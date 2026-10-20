@@ -25,7 +25,8 @@ export const DEFAULTS: WatchConfig = {
   },
   showRecentCalls: 8,
   timeFormat: 'mmss',
-  colors: { ok: 'green', warn: 'yellow', attention: 'red', accent: 'cyan', dim: 'gray' },
+  // Empty = follow the theme. Set a colour name or #rrggbb to override.
+  colors: { ok: '', warn: '', attention: '', accent: '', dim: '' },
   estimate: {
     enabled: true,
     historySize: 10,

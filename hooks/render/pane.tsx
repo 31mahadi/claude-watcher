@@ -2,9 +2,8 @@ import type { WatchCall, WatchConfig, WatchPeer, WatchSnapshot, WatchTab, WatchU
 import { CHOICES, getPath } from '../config'
 import { estimateMs, median } from '../estimate'
 import { ago, basename, pct, seconds, time, truncate } from '../format'
-import type { Semantic } from './colors'
-import { resolve } from './colors'
-import { Bar, Card, Donut, Gantt, HeatStrip, Pill, Sparkline, spinGlyph, type GanttLane, type Kit } from './widgets'
+import { resolve, type Semantic } from './colors'
+import { Bar, Card, Donut, Gantt, inner, Mark, Pill, Pulse, Row, Sparkline, type GanttLane, type Kit } from './widgets'
 
 export type View = {
   k: Kit
@@ -21,15 +20,18 @@ export type View = {
   }
 }
 
+// 'turn' is the adaptive dashboard; the others are detail views reached by /watch <tab>.
 export const TABS: readonly WatchTab[] = ['turn', 'plan', 'agents', 'sessions', 'health', 'config']
+
+const COMPACT_BELOW = 60
 
 const PHASE_LABEL: Record<WatchSnapshot['phase'], string> = {
   idle: 'Idle',
   thinking: 'Thinking',
   tool: 'Running',
-  waiting_permission: 'Needs permission',
-  waiting_question: 'Waiting for answer',
-  subagent: 'Subagents',
+  waiting_permission: 'Needs you',
+  waiting_question: 'Needs you',
+  subagent: 'Agents working',
   error: 'Error',
   done: 'Done',
 }
@@ -39,7 +41,7 @@ export function phaseSem(phase: WatchSnapshot['phase']): Semantic {
   if (phase === 'waiting_permission' || phase === 'waiting_question') return 'warn'
   if (phase === 'done') return 'ok'
   if (phase === 'idle') return 'dim'
-  return 'running'
+  return 'accent'
 }
 
 export const isActive = (s: WatchSnapshot) => s.turnStartedAt !== null && s.turnEndedAt === null
@@ -52,81 +54,36 @@ export function turnElapsed(s: WatchSnapshot, now: number): number {
 export function currentEta(s: WatchSnapshot, history: Record<string, number[]>, cfg: WatchConfig, now: number) {
   const c = s.current
   if (!c || !cfg.estimate.enabled) return undefined
-  return estimateMs(history[c.key], now - c.startedAt, cfg.estimate.minSamples, timeoutOf(c))
-}
-
-function timeoutOf(c: WatchCall): number | undefined {
   const m = /timeout=(\d+)/.exec(c.note ?? '')
-  return m ? Number(m[1]) : undefined
+  return estimateMs(history[c.key], now - c.startedAt, cfg.estimate.minSamples, m ? Number(m[1]) : undefined)
 }
 
 export function etaText(eta: ReturnType<typeof currentEta>, cfg: WatchConfig): string | undefined {
   if (!eta) return undefined
   if (eta.confidence === 'max') return `up to ${time(eta.remainingMs, cfg.timeFormat)}`
-  if (eta.remainingMs === 0) return `overdue (${eta.confidence})`
-  return `${eta.confidence === '~' ? '~' : '?'}${time(eta.remainingMs, cfg.timeFormat)} left`
+  if (eta.remainingMs === 0) return 'overdue'
+  return `${eta.confidence}${time(eta.remainingMs, cfg.timeFormat)} left`
 }
 
 export function planEta(s: WatchSnapshot): { done: number; total: number; remainingMs?: number } {
   const total = s.tasks.length
   const done = s.tasks.filter(t => t.status === 'done').length
-  const durations = s.tasks
-    .filter(t => t.status === 'done' && t.endedAt && t.startedAt)
-    .map(t => t.endedAt! - t.startedAt!)
+  const durations = s.tasks.filter(t => t.status === 'done' && t.endedAt && t.startedAt).map(t => t.endedAt! - t.startedAt!)
   if (durations.length === 0 || done === total) return { done, total }
   return { done, total, remainingMs: (total - done) * median(durations) }
 }
 
-// One-line summary used by the spinner suffix and the sessions board.
+// One-line summary for the spinner suffix and the sessions board.
 export function summary(v: Pick<View, 's' | 'history' | 'now'> & { cfg: WatchConfig }): string {
   const { s, cfg, now } = v
   const parts: string[] = []
-  if (s.current) parts.push(s.current.label)
-  if (s.current) parts.push(time(now - s.current.startedAt, cfg.timeFormat))
+  if (s.current) parts.push(s.current.label, time(now - s.current.startedAt, cfg.timeFormat))
   const eta = etaText(currentEta(s, v.history, cfg, now), cfg)
   if (eta) parts.push(eta)
   const p = planEta(s)
   if (p.total > 0) parts.push(`${p.done}/${p.total} tasks`)
   if (s.health.needsYou) parts.push('needs you')
   return truncate(parts.join(' · '), cfg.spinnerMaxChars)
-}
-
-export function Pane(v: View) {
-  const { els, cfg } = v.k
-  const { Box, Text, Button } = els
-  const tab = v.ui.tab
-  const tabs = (
-    <Box flexDirection="row" gap={1} flexWrap="wrap">
-      {TABS.map((t, i) => (
-        <Button
-          key={`tab-${t}`}
-          label={t}
-          hotkey={String(i + 1)}
-          variant={t === tab ? 'primary' : 'secondary'}
-          onPress={() => v.actions.tab(t)}
-        />
-      ))}
-    </Box>
-  )
-  const body =
-    tab === 'plan'
-      ? PlanTab(v)
-      : tab === 'agents'
-        ? AgentsTab(v)
-        : tab === 'sessions'
-          ? SessionsTab(v)
-          : tab === 'health'
-            ? HealthTab(v)
-            : tab === 'config'
-              ? ConfigTab(v)
-              : TurnTab(v)
-  return (
-    <Box flexDirection="column" gap={cfg.theme === 'dense' || cfg.compact ? 0 : 1}>
-      {tabs}
-      {v.s.health.needsYou ? <Text color={resolve('attention', cfg)}>⏸ {needsYouText(v.s, v.now)}</Text> : null}
-      {body}
-    </Box>
-  )
 }
 
 export function needsYouText(s: WatchSnapshot, now: number): string {
@@ -143,141 +100,276 @@ export function needsYouText(s: WatchSnapshot, now: number): string {
   return `${what} (${time(now - n.since)})`
 }
 
-function callRow(v: View, c: WatchCall) {
-  const { Box, Text } = v.k.els
-  const cfg = v.k.cfg
-  const mark = c.ok === undefined ? '▶' : c.ok ? '✓' : '✗'
-  const sem: Semantic = c.ok === undefined ? 'running' : c.ok ? 'ok' : 'attention'
-  const width = Math.max(10, v.k.columns - 16)
+export function Pane(v: View) {
+  const { Box, Button, Text } = v.k.els
+  const gap = v.k.cfg.theme === 'dense' ? 0 : 1
+  if (v.ui.tab === 'turn') {
+    return (
+      <Box flexDirection="column" gap={gap}>
+        {Dashboard(v)}
+      </Box>
+    )
+  }
+  const detail =
+    v.ui.tab === 'plan'
+      ? PlanDetail(v)
+      : v.ui.tab === 'agents'
+        ? AgentsDetail(v)
+        : v.ui.tab === 'sessions'
+          ? SessionsDetail(v)
+          : v.ui.tab === 'health'
+            ? HealthDetail(v)
+            : ConfigDetail(v)
   return (
-    <Box flexDirection="row" justifyContent="space-between">
-      <Text wrap="truncate-end">
-        <Text color={resolve(sem, cfg)}>{mark}</Text> {truncate(c.label, width)}
-      </Text>
-      <Text dimColor>
-        {seconds(c.durationMs ?? v.now - c.startedAt)}
-        {c.note && !c.note.startsWith('timeout=') ? `  ${c.note}` : ''}
-      </Text>
+    <Box flexDirection="column" gap={gap}>
+      <Box flexDirection="row" gap={1}>
+        <Button key="back" label="← dashboard" hotkey="b" onPress={() => v.actions.tab('turn')} />
+        <Text dimColor>{v.ui.tab}</Text>
+      </Box>
+      {detail}
     </Box>
   )
 }
 
-function TurnTab(v: View) {
-  const { k, s, now } = v
+// ── Dashboard: sections appear only when they have something to say ──
+
+function Dashboard(v: View) {
+  const compact = v.k.cfg.compact || v.k.columns < COMPACT_BELOW
+  const sections = [
+    NeedsYouCard(v),
+    NowCard(v),
+    compact ? null : FailureCard(v),
+    compact ? null : PlanCard(v),
+    compact ? null : AgentsCard(v),
+    compact ? null : RecentCard(v),
+    StatusPills(v),
+    compact ? null : OtherSessions(v),
+  ]
+  return sections.filter(Boolean)
+}
+
+function NeedsYouCard(v: View) {
+  const { s, now, k } = v
+  if (!s.health.needsYou) return null
+  const { Text } = k.els
+  const hint = s.health.needsYou.kind === 'permission' ? 'Review the prompt below to continue.' : 'Answer in the prompt below.'
+  return Card(k, 'needs-you', <Text bold>{needsYouText(s, now)}</Text>, undefined, [<Text dimColor>{hint}</Text>], 'warn')
+}
+
+function NowCard(v: View) {
+  const { s, now, k } = v
   const { Box, Text } = k.els
   const cfg = k.cfg
-  const eta = currentEta(s, v.history, cfg, now)
-  const glyph = isActive(s) ? spinGlyph(cfg, v.ui.tick) : s.phase === 'error' ? '✗' : s.phase === 'done' ? '✓' : '○'
-  const headline = s.current ? `${PHASE_LABEL[s.phase]}: ${s.current.label}` : PHASE_LABEL[s.phase]
-  const right = [s.current ? time(now - s.current.startedAt, cfg.timeFormat) : undefined, etaText(eta, cfg)].filter(Boolean).join(' · ')
+  const sem = phaseSem(s.phase)
+  const active = isActive(s)
+
+  if (s.turnStartedAt === null) {
+    return Card(k, 'now', 'Watcher', undefined, [<Text dimColor>Waiting for a prompt.</Text>])
+  }
+
+  const title = (
+    <Box flexDirection="row" gap={1}>
+      {active ? Pulse(k, sem) : Mark(k, s.phase === 'error' ? '✗' : '✓', sem)}
+      <Text bold>{PHASE_LABEL[s.phase]}</Text>
+    </Box>
+  )
+  const p = planEta(s)
+  const right = [time(turnElapsed(s, now), cfg.timeFormat), p.remainingMs ? `~${time(p.remainingMs, cfg.timeFormat)} left` : undefined].filter(Boolean).join(' · ')
+
+  if (!active) {
+    const failed = s.recent.filter(c => c.ok === false).length
+    const line = `${s.toolCalls} tool calls${failed ? ` · ${failed} failed` : ''}${s.tasks.length ? ` · ${p.done}/${p.total} tasks` : ''}`
+    return Card(k, 'now', title, right, [<Text dimColor>{line}</Text>], sem)
+  }
+
+  const body: unknown[] = []
+  if (s.current) {
+    const eta = currentEta(s, v.history, cfg, now)
+    body.push(Row(k, <Text wrap="truncate-end">{truncate(s.current.label, inner(k) - 9)}</Text>, time(now - s.current.startedAt, cfg.timeFormat)))
+    if (eta) body.push(Bar(k, 'now-bar', eta.fraction, eta.remainingMs === 0 ? 'warn' : 'accent', etaText(eta, cfg) ?? ''))
+  } else {
+    body.push(<Text dimColor>{s.toolCalls ? `${s.toolCalls} tool calls so far` : 'Thinking…'}</Text>)
+  }
+  return Card(k, 'now', title, right, body, sem)
+}
+
+function FailureCard(v: View) {
+  const { s, k, now } = v
+  const t = s.health.lastTest
+  if (!t || t.ok || !k.cfg.visuals.failedTestSnippet) return null
+  if (s.turnStartedAt !== null && t.at < s.turnStartedAt) return null
+  const { Text, Code } = k.els
+  const body: unknown[] = [<Text dimColor>{truncate(t.command, inner(k))}</Text>]
+  if (t.snippet) body.push(Code ? <Code source={t.snippet} /> : <Text>{t.snippet}</Text>)
+  return Card(k, 'failure', `Tests failed · ${t.failed} of ${t.passed + t.failed}`, ago(now - t.at), body, 'attention')
+}
+
+function taskRow(v: View, t: WatchSnapshot['tasks'][number]) {
+  const { k, now } = v
+  const { Text } = k.els
+  const glyph = t.status === 'done' ? '✓' : t.status === 'running' ? '▶' : '○'
+  const sem: Semantic = t.status === 'done' ? 'ok' : t.status === 'running' ? 'accent' : 'dim'
+  const dur = t.startedAt ? time((t.endedAt ?? now) - t.startedAt, k.cfg.timeFormat) : ''
+  return Row(
+    k,
+    <Text wrap="truncate-end">
+      {Mark(k, glyph, sem)} {t.status === 'pending' ? <Text dimColor>{t.title}</Text> : t.title}
+    </Text>,
+    dur,
+  )
+}
+
+function PlanCard(v: View) {
+  const { s, k } = v
+  if (s.tasks.length === 0) return null
+  const p = planEta(s)
+  // The running task with one before and up to three after; the rest is in /watch plan.
+  const idx = Math.max(0, s.tasks.findIndex(t => t.status !== 'done'))
+  const from = Math.max(0, idx - 1)
+  const shown = s.tasks.slice(from, from + 5)
+  const { Text } = k.els
+  const more = s.tasks.length - shown.length
+  return Card(k, 'plan', 'Plan', `${p.done}/${p.total}`, [
+    Bar(k, 'plan-bar', p.total ? p.done / p.total : 0, p.done === p.total ? 'ok' : 'accent', `${Math.round((p.done / Math.max(1, p.total)) * 100)}%`),
+    ...shown.map(t => taskRow(v, t)),
+    more > 0 ? <Text dimColor>{`+${more} more · /watch plan`}</Text> : null,
+  ])
+}
+
+function agentSem(a: WatchSnapshot['agents'][number]): Semantic {
+  return a.phase === 'running' ? 'accent' : a.phase === 'done' ? 'ok' : a.phase === 'failed' ? 'attention' : 'dim'
+}
+
+function agentRow(v: View, a: WatchSnapshot['agents'][number]) {
+  const { k, now } = v
+  const { Text } = k.els
+  const glyph = a.phase === 'running' ? '▶' : a.phase === 'done' ? '✓' : a.phase === 'failed' ? '✗' : '○'
+  return Row(
+    k,
+    <Text wrap="truncate-end">
+      {Mark(k, glyph, agentSem(a))} {a.type}
+      <Text dimColor>{a.current ? `  ${truncate(a.current, 30)}` : ''}</Text>
+    </Text>,
+    time((a.endedAt ?? now) - a.startedAt, k.cfg.timeFormat),
+  )
+}
+
+function lanes(v: View): GanttLane[] {
+  const { s, now } = v
+  return [
+    ...(s.turnStartedAt !== null ? [{ label: 'main', start: s.turnStartedAt, end: s.turnEndedAt ?? now, sem: phaseSem(s.phase) }] : []),
+    ...s.agents.map(a => ({ label: a.type, start: a.startedAt, end: a.endedAt ?? now, sem: agentSem(a), failed: a.phase === 'failed' })),
+  ]
+}
+
+function ganttFrom(v: View): number {
+  const { s, now, k } = v
+  return Math.max(now - k.cfg.visuals.ganttWindowMinutes * 60_000, Math.min(s.turnStartedAt ?? now, ...s.agents.map(a => a.startedAt)))
+}
+
+function AgentsCard(v: View) {
+  const { s, k, now } = v
+  if (s.agents.length === 0) return null
   const running = s.agents.filter(a => a.phase === 'running').length
-  const stats = [
-    `Turn ${time(turnElapsed(s, now), cfg.timeFormat)}`,
-    `tools ${s.toolCalls}`,
-    `agents ${running}`,
-    s.health.contextPct !== undefined ? `ctx ${pct(s.health.contextPct)}` : undefined,
-  ].filter(Boolean)
-  const recent = s.recent.slice(-cfg.showRecentCalls)
+  return Card(k, 'agents', 'Agents', running ? `${running} running` : `${s.agents.length} done`, [
+    ...s.agents.slice(-4).map(a => agentRow(v, a)),
+    Gantt(k, 'agents-gantt', lanes(v), ganttFrom(v), now),
+  ])
+}
+
+function callRow(v: View, c: WatchCall) {
+  const { k, now } = v
+  const { Text } = k.els
+  const glyph = c.ok === undefined ? '▶' : c.ok ? '✓' : '✗'
+  const sem: Semantic = c.ok === undefined ? 'accent' : c.ok ? 'ok' : 'attention'
+  const note = c.note && !c.note.startsWith('timeout=') ? c.note : undefined
+  return Row(
+    k,
+    <Text wrap="truncate-end">
+      {Mark(k, glyph, sem)} {truncate(c.label, inner(k) - (note ? note.length + 12 : 10))}
+      {note ? <Text color={resolve('attention', k.cfg)}>{`  ${note}`}</Text> : null}
+    </Text>,
+    seconds(c.durationMs ?? now - c.startedAt),
+  )
+}
+
+function RecentCard(v: View) {
+  const { s, k } = v
   const done = s.recent.filter(c => c.durationMs !== undefined)
-  return Card(k, `${glyph} ${truncate(headline, Math.max(10, k.columns - right.length - 6))}`, right || undefined, [
-    s.current && eta ? Bar(k, 'turn-bar', eta.fraction, 'accent') : null,
-    <Text dimColor>{stats.join(' · ')}</Text>,
-    HeatStrip(
-      k,
-      'turn-heat',
-      done.slice(-30).map(c => (c.ok ? 'ok' : 'attention')),
-    ),
+  if (done.length === 0) return null
+  const count = Math.min(k.cfg.showRecentCalls, 6)
+  return Card(k, 'recent', 'Recent', `${s.toolCalls} calls`, [
+    ...done.slice(-count).map(c => callRow(v, c)),
     Sparkline(
       k,
-      'turn-spark',
-      done.slice(-30).map(c => c.durationMs ?? 0),
+      'recent-spark',
+      done.slice(-40).map(c => c.durationMs ?? 0),
     ),
-    recent.length ? <Text dimColor>── recent ──</Text> : <Text dimColor>No tool calls yet.</Text>,
-    <Box flexDirection="column">{recent.map(c => callRow(v, c))}</Box>,
   ])
 }
 
-function PlanTab(v: View) {
-  const { k, s, now } = v
-  const { Box, Text } = k.els
-  const cfg = k.cfg
-  if (s.tasks.length === 0) {
-    return Card(k, 'Plan', undefined, [
-      <Text dimColor>No task list this turn. Claude creates one with the task tool for multi-step work.</Text>,
-    ])
-  }
+function StatusPills(v: View) {
+  const { s, k } = v
+  const { Box } = k.els
+  const hl = s.health
+  const ctxSem: Semantic | undefined =
+    hl.contextPct === undefined ? undefined : hl.contextPct >= 90 ? 'attention' : hl.contextPct >= k.cfg.health.contextWarnPct ? 'warn' : undefined
+  const t = hl.lastTest
+  const pills = [
+    s.branch ? Pill(k, `${s.branch}${hl.dirtyFiles ? ` · ${hl.dirtyFiles} dirty` : ''}`, undefined) : null,
+    hl.contextPct !== undefined ? Pill(k, `ctx ${pct(hl.contextPct)}`, ctxSem) : null,
+    t ? Pill(k, t.ok ? `tests ${t.passed} ✓` : `tests ${t.failed} ✗`, t.ok ? 'ok' : 'attention') : null,
+    hl.lastLint && !hl.lastLint.ok ? Pill(k, 'lint ✗', 'attention') : null,
+    hl.lastBuild && !hl.lastBuild.ok ? Pill(k, 'build ✗', 'attention') : null,
+    hl.lastError ? Pill(k, hl.lastError.kind, 'attention') : null,
+    s.model ? Pill(k, s.model, undefined) : null,
+    k.cfg.health.showCost && hl.costUsd !== undefined ? Pill(k, `$${hl.costUsd.toFixed(2)}`, undefined) : null,
+  ].filter(Boolean)
+  if (pills.length === 0) return null
+  return (
+    <Box key="pills" flexDirection="row" gap={1} flexWrap="wrap">
+      {pills.slice(0, 6)}
+    </Box>
+  )
+}
+
+function OtherSessions(v: View) {
+  const { k, s, peers } = v
+  const waiting = peers.filter(p => p.sessionId !== s.sessionId && p.needsYou && !p.endedAt)
+  if (waiting.length === 0) return null
+  const { Button, Text } = k.els
+  const n = waiting.length
+  return (
+    <Button key="other-sessions" plain onPress={() => v.actions.tab('sessions')}>
+      <Text color={resolve('warn', k.cfg)}>⏸</Text>
+      {` ${n} other session${n > 1 ? 's need' : ' needs'} you: ${waiting.map(p => p.project).join(', ')}`}
+    </Button>
+  )
+}
+
+// ── Detail views (/watch <tab>) ──
+
+function PlanDetail(v: View) {
+  const { s, k, now } = v
+  const { Text } = k.els
+  if (s.tasks.length === 0) return Card(k, 'plan', 'Plan', undefined, [<Text dimColor>No task list this turn.</Text>])
   const p = planEta(s)
-  const right = [`${p.done}/${p.total}`, time(turnElapsed(s, now), cfg.timeFormat), p.remainingMs ? `~${time(p.remainingMs, cfg.timeFormat)} left` : undefined]
+  const right = [`${p.done}/${p.total}`, time(turnElapsed(s, now), k.cfg.timeFormat), p.remainingMs ? `~${time(p.remainingMs, k.cfg.timeFormat)} left` : undefined]
     .filter(Boolean)
     .join(' · ')
-  return Card(k, 'Plan', right, [
-    Bar(k, 'plan-bar', p.total ? p.done / p.total : 0, 'ok'),
-    <Box flexDirection="column">
-      {s.tasks.map(t => {
-        const mark = t.status === 'done' ? '✓' : t.status === 'running' ? '▶' : '○'
-        const sem: Semantic = t.status === 'done' ? 'ok' : t.status === 'running' ? 'running' : 'queued'
-        const dur = t.startedAt ? time((t.endedAt ?? now) - t.startedAt, cfg.timeFormat) : ''
-        const extra = t.status === 'running' && s.current ? `  (${truncate(s.current.label, 24)})` : ''
-        return (
-          <Box flexDirection="row" justifyContent="space-between">
-            <Text wrap="truncate-end">
-              <Text color={resolve(sem, cfg)}>{mark}</Text> {t.title}
-              <Text dimColor>{extra}</Text>
-            </Text>
-            <Text dimColor>{dur}</Text>
-          </Box>
-        )
-      })}
-    </Box>,
+  return Card(k, 'plan', 'Plan', right, [
+    Bar(k, 'plan-bar', p.done / Math.max(1, p.total), 'accent', `${Math.round((p.done / Math.max(1, p.total)) * 100)}%`),
+    ...s.tasks.map(t => taskRow(v, t)),
   ])
 }
 
-function AgentsTab(v: View) {
-  const { k, s, now } = v
-  const { Box, Text } = k.els
-  const cfg = k.cfg
-  const rows = s.agents
-  const mainLabel = s.current ? s.current.label : PHASE_LABEL[s.phase]
-  const windowMs = cfg.visuals.ganttWindowMinutes * 60_000
-  const from = Math.max(now - windowMs, Math.min(s.turnStartedAt ?? now, ...rows.map(a => a.startedAt)))
-  const lanes: GanttLane[] = [
-    ...(s.turnStartedAt !== null
-      ? [{ label: 'main', start: s.turnStartedAt, end: s.turnEndedAt ?? now, sem: phaseSem(s.phase) }]
-      : []),
-    ...rows.map(a => ({
-      label: a.type,
-      start: a.startedAt,
-      end: a.endedAt ?? now,
-      sem: (a.phase === 'failed' ? 'attention' : a.phase === 'done' ? 'ok' : a.phase === 'idle' ? 'dim' : 'running') as Semantic,
-      failed: a.phase === 'failed',
-    })),
-  ]
-  return Card(k, 'Agents', `${rows.filter(a => a.phase === 'running').length} running`, [
-    <Box flexDirection="row" justifyContent="space-between">
-      <Text>
-        <Text bold>main</Text> <Text color={resolve(phaseSem(s.phase), cfg)}>{isActive(s) ? '▶' : '○'}</Text> {truncate(mainLabel, k.columns - 20)}
-      </Text>
-      <Text dimColor>{time(turnElapsed(s, now), cfg.timeFormat)}</Text>
-    </Box>,
-    <Box flexDirection="column">
-      {rows.map((a, i) => {
-        const branch = i === rows.length - 1 ? '└' : '├'
-        const mark = a.phase === 'running' ? '▶' : a.phase === 'done' ? '✓' : a.phase === 'failed' ? '✗' : '○'
-        const sem: Semantic = a.phase === 'running' ? 'running' : a.phase === 'done' ? 'ok' : a.phase === 'failed' ? 'attention' : 'dim'
-        return (
-          <Box flexDirection="row" justifyContent="space-between">
-            <Text wrap="truncate-end">
-              {' '}
-              {branch} {a.type} <Text color={resolve(sem, cfg)}>{mark}</Text> {a.current ? truncate(a.current, 40) : ''}
-              <Text dimColor> {a.toolCalls} tools</Text>
-            </Text>
-            <Text dimColor>{time((a.endedAt ?? now) - a.startedAt, cfg.timeFormat)}</Text>
-          </Box>
-        )
-      })}
-    </Box>,
-    rows.length === 0 ? <Text dimColor>No subagents this session.</Text> : null,
-    Gantt(k, 'agents-gantt', lanes, from, now),
+function AgentsDetail(v: View) {
+  const { s, k, now } = v
+  const { Text } = k.els
+  if (s.agents.length === 0) return Card(k, 'agents', 'Agents', undefined, [<Text dimColor>No subagents this session.</Text>])
+  return Card(k, 'agents', 'Agents', `${s.agents.filter(a => a.phase === 'running').length} running`, [
+    ...s.agents.map(a => agentRow(v, a)),
+    Gantt(k, 'agents-gantt', lanes(v), ganttFrom(v), now),
   ])
 }
 
@@ -286,150 +378,94 @@ export function visiblePeers(peers: readonly WatchPeer[], cfg: WatchConfig, now:
   return peers.filter(p => !(p.endedAt && now - p.endedAt > hideAfter) && now - p.beatAt < Math.max(hideAfter, 3_600_000))
 }
 
-function SessionsTab(v: View) {
+function SessionsDetail(v: View) {
   const { k, now } = v
   const { Box, Text, Button } = k.els
   const cfg = k.cfg
+  if (!cfg.sessions.shareState) return Card(k, 'sessions', 'Sessions', undefined, [<Text dimColor>Session sharing is off.</Text>])
   const list = visiblePeers(v.peers, cfg, now).filter(p => v.ui.scope === 'all' || p.sessionId === v.s.sessionId)
   const staleMs = cfg.sessions.staleAfterSeconds * 1000
-  const scope = (
+  const rows = list.map(p => {
+    const busy = p.phase !== 'done' && p.phase !== 'idle'
+    const stale = !p.endedAt && busy && now - p.beatAt > staleMs
+    const name = cfg.sessions.showCwd === 'hidden' ? p.sessionId.slice(0, 8) : cfg.sessions.showCwd === 'full' ? p.cwd : p.project
+    const sem: Semantic = p.needsYou ? 'warn' : stale || p.endedAt || !busy ? 'dim' : p.phase === 'error' ? 'attention' : 'accent'
+    const state = p.needsYou ? 'NEEDS YOU' : p.endedAt ? `ended ${ago(now - p.endedAt)}` : busy ? truncate(p.label ?? p.phase, 28) : 'idle'
+    const elapsed = busy && p.turnStartedAt && !p.endedAt ? time(now - p.turnStartedAt, cfg.timeFormat) : ''
+    return (
+      <Button key={`peer-${p.sessionId}`} plain onPress={() => v.actions.copy(`claude --resume ${p.sessionId}`)}>
+        <Text color={resolve(sem, cfg)}>{stale || !busy ? '○' : '●'}</Text> {truncate(name, 16)}
+        <Text dimColor>{p.branch ? ` ${truncate(p.branch, 14)}` : ''}</Text> {p.needsYou ? <Text color={resolve('warn', cfg)}>{state}</Text> : <Text dimColor>{state}</Text>}
+        <Text dimColor>{` ${elapsed}${p.tasksTotal ? ` ${p.tasksDone}/${p.tasksTotal}` : ''}${p.sessionId === v.s.sessionId ? ' (this)' : ''}`}</Text>
+      </Button>
+    )
+  })
+  return Card(k, 'sessions', `Sessions (${list.length})`, undefined, [
     <Box flexDirection="row" gap={1}>
       <Button key="scope-this" label="this" variant={v.ui.scope === 'this' ? 'primary' : 'secondary'} onPress={() => v.actions.scope('this')} />
       <Button key="scope-all" label="all" variant={v.ui.scope === 'all' ? 'primary' : 'secondary'} onPress={() => v.actions.scope('all')} />
-    </Box>
-  )
-  if (!cfg.sessions.shareState) {
-    return Card(k, 'Sessions', undefined, [<Text dimColor>Session sharing is off (sessions.shareState).</Text>])
-  }
-  return Card(k, `Sessions (${list.length})`, undefined, [
-    scope,
-    <Box flexDirection="column">
-      {list.map(p => {
-        const busy = p.phase !== 'done' && p.phase !== 'idle'
-        const stale = !p.endedAt && busy && now - p.beatAt > staleMs
-        const name = cfg.sessions.showCwd === 'hidden' ? p.sessionId.slice(0, 8) : cfg.sessions.showCwd === 'full' ? p.cwd : p.project
-        const state = p.needsYou
-          ? '⏸ NEEDS YOU'
-          : p.endedAt
-            ? `✓ ended ${ago(now - p.endedAt)}`
-            : p.phase === 'done' || p.phase === 'idle'
-              ? `✓ idle`
-              : `▶ ${truncate(p.label ?? p.phase, 24)}`
-        const sem: Semantic = p.needsYou ? 'warn' : stale || p.endedAt ? 'dim' : p.phase === 'error' ? 'attention' : 'running'
-        const elapsed = p.turnStartedAt && !p.endedAt && p.phase !== 'done' && p.phase !== 'idle' ? time(now - p.turnStartedAt, cfg.timeFormat) : ''
-        const tasks = p.tasksTotal ? `${p.tasksDone}/${p.tasksTotal}` : ''
-        const mine = p.sessionId === v.s.sessionId
-        return (
-          <Button key={`peer-${p.sessionId}`} plain onPress={() => v.actions.copy(`claude --resume ${p.sessionId}`)}>
-            <Text color={resolve(sem, cfg)}>{stale ? '○' : '●'}</Text> {truncate(name, 16)}
-            <Text dimColor> {truncate(p.branch ?? '', 14)}</Text> <Text color={resolve(sem, cfg)}>{state}</Text>
-            <Text dimColor>
-              {' '}
-              {elapsed} {tasks} {p.needsYou ?? ''}
-              {mine ? ' (this)' : ''}
-            </Text>
-          </Button>
-        )
-      })}
     </Box>,
-    list.length === 0 ? <Text dimColor>No sessions yet.</Text> : null,
-    <Text dimColor>Press a session to copy its resume command.</Text>,
+    ...rows,
+    list.length === 0 ? <Text dimColor>No sessions yet.</Text> : <Text dimColor>Press a session to copy its resume command.</Text>,
   ])
 }
 
-function HealthTab(v: View) {
-  const { k, s, now } = v
-  const { Box, Text, Markdown, Code } = k.els
+function HealthDetail(v: View) {
+  const { s, k, now } = v
+  const { Box, Text } = k.els
   const cfg = k.cfg
   const hl = s.health
   const t = hl.lastTest
-  const testLine = t
-    ? `${t.ok ? '✓' : '✗'} ${t.failed ? `${t.failed} failed / ` : ''}${t.passed} passed (${ago(now - t.at)}, ${t.runner}, parsed)`
-    : '—'
-  const ctxSem: Semantic = (hl.contextPct ?? 0) >= cfg.health.contextWarnPct ? 'warn' : 'ok'
-  const pills = [
-    Pill(k, t ? (t.ok ? 'tests ✓' : 'tests ✗') : 'tests —', t ? (t.ok ? 'ok' : 'attention') : 'dim'),
-    Pill(k, hl.lastLint ? (hl.lastLint.ok ? 'lint ✓' : 'lint ✗') : 'lint —', hl.lastLint ? (hl.lastLint.ok ? 'ok' : 'attention') : 'dim'),
-    Pill(k, hl.lastBuild ? (hl.lastBuild.ok ? 'build ✓' : 'build ✗') : 'build —', hl.lastBuild ? (hl.lastBuild.ok ? 'ok' : 'attention') : 'dim'),
-    Pill(k, hl.contextPct !== undefined ? `ctx ${pct(hl.contextPct)}` : 'ctx —', hl.contextPct !== undefined ? ctxSem : 'dim'),
-    Pill(k, hl.lastError ? 'error' : 'no errors', hl.lastError ? 'attention' : 'ok'),
-  ]
-  const snippet =
-    t && !t.ok && t.snippet && cfg.visuals.failedTestSnippet
-      ? Markdown && v.k.surface !== 'terminal'
-        ? <Markdown text={'```\n' + t.snippet + '\n```'} />
-        : Code
-          ? <Code source={t.snippet} />
-          : <Text dimColor>{t.snippet}</Text>
-      : null
-  return Card(k, 'Health', undefined, [
-    <Text>
-      <Text bold>Needs you: </Text>
-      {hl.needsYou ? <Text color={resolve('attention', cfg)}>{needsYouText(s, now)}</Text> : '—'}
-    </Text>,
-    <Text>
-      <Text bold>Tests: </Text>
-      <Text color={resolve(t ? (t.ok ? 'ok' : 'attention') : 'dim', cfg)}>{testLine}</Text>
-      {'   '}
-      <Text bold>Lint: </Text>
-      {hl.lastLint ? (hl.lastLint.ok ? '✓' : '✗') : '—'}
-      {'   '}
-      <Text bold>Build: </Text>
-      {hl.lastBuild ? (hl.lastBuild.ok ? '✓' : '✗') : '—'}
-    </Text>,
-    snippet,
-    cfg.health.gitStatus ? (
-      <Text wrap="truncate-end">
-        <Text bold>Git: </Text>
-        {s.branch ?? '—'} · {hl.dirtyFiles ?? '?'} dirty · edited: {hl.editedFiles.length ? hl.editedFiles.map(basename).join(', ') : '—'}
-      </Text>
-    ) : null,
-    <Box flexDirection="row" gap={1} alignItems="center">
-      <Text bold>Context: </Text>
-      {hl.contextPct !== undefined ? Donut(k, hl.contextPct / 100, ctxSem) : <Text dimColor>—</Text>}
-      <Text dimColor>
-        {hl.contextPct !== undefined ? pct(hl.contextPct) : ''}
-        {hl.compactions ? ` · ${hl.compactions} compactions` : ''}
-        {hl.rateLimitPct !== undefined ? ` · rate limit ${pct(hl.rateLimitPct)}` : ''}
-      </Text>
-    </Box>,
-    <Text>
-      <Text bold>Model: </Text>
-      {s.model ?? '—'}
-      {s.effort ? ` · effort ${s.effort}` : ''}
-      {'   '}
-      <Text bold>Rate: </Text>
-      {toolRate(s, now)}
-    </Text>,
-    <Text>
-      <Text bold>Errors: </Text>
-      {hl.lastError ? <Text color={resolve('attention', cfg)}>{`${hl.lastError.kind} ${ago(now - hl.lastError.at)}`}</Text> : 'none'}
-      {cfg.health.showCost && hl.costUsd !== undefined ? `   Cost: ~$${hl.costUsd.toFixed(2)} this session` : ''}
-    </Text>,
-    <Box flexDirection="row" gap={1} flexWrap="wrap">
-      {pills}
-    </Box>,
+  const ctxSem: Semantic = (hl.contextPct ?? 0) >= 90 ? 'attention' : (hl.contextPct ?? 0) >= cfg.health.contextWarnPct ? 'warn' : 'ok'
+  const line = (name: string, value: unknown) => (
+    <Box flexDirection="row">
+      <Text dimColor>{name.padEnd(10)}</Text>
+      {value}
+    </Box>
+  )
+  const none = <Text dimColor>—</Text>
+  const status = (ok: boolean | undefined) => (ok === undefined ? none : <Text color={resolve(ok ? 'ok' : 'attention', cfg)}>{ok ? '✓' : '✗'}</Text>)
+  return Card(k, 'health', 'Health', undefined, [
+    line('Needs you', hl.needsYou ? <Text color={resolve('warn', cfg)}>{needsYouText(s, now)}</Text> : none),
+    line(
+      'Tests',
+      t ? <Text color={resolve(t.ok ? 'ok' : 'attention', cfg)}>{`${t.ok ? '✓' : '✗'} ${t.failed ? `${t.failed} failed / ` : ''}${t.passed} passed · ${ago(now - t.at)}`}</Text> : none,
+    ),
+    line('Lint', status(hl.lastLint?.ok)),
+    line('Build', status(hl.lastBuild?.ok)),
+    cfg.health.gitStatus
+      ? line('Git', <Text wrap="truncate-end">{`${s.branch ?? '—'} · ${hl.dirtyFiles ?? '?'} dirty${hl.editedFiles.length ? ` · edited ${hl.editedFiles.map(basename).join(', ')}` : ''}`}</Text>)
+      : null,
+    line(
+      'Context',
+      hl.contextPct !== undefined ? (
+        <Box flexDirection="row" gap={1}>
+          {Donut(k, hl.contextPct / 100, ctxSem)}
+          <Text>{pct(hl.contextPct)}</Text>
+          <Text dimColor>{hl.compactions ? `· ${hl.compactions} compactions` : ''}</Text>
+        </Box>
+      ) : (
+        none
+      ),
+    ),
+    hl.rateLimitPct !== undefined ? line('Limits', <Text>{`${pct(hl.rateLimitPct)} of rate limit`}</Text>) : null,
+    line('Model', <Text>{`${s.model ?? '—'}${s.effort ? ` · effort ${s.effort}` : ''}`}</Text>),
+    line('Errors', hl.lastError ? <Text color={resolve('attention', cfg)}>{`${hl.lastError.kind} · ${ago(now - hl.lastError.at)}`}</Text> : <Text dimColor>none</Text>),
+    cfg.health.showCost && hl.costUsd !== undefined ? line('Cost', <Text>{`$${hl.costUsd.toFixed(2)} this session`}</Text>) : null,
   ])
-}
-
-function toolRate(s: WatchSnapshot, now: number): string {
-  const elapsed = turnElapsed(s, now)
-  if (elapsed < 1000 || s.toolCalls === 0) return '—'
-  return `${(s.toolCalls / (elapsed / 60_000)).toFixed(1)} tools/min`
 }
 
 const TOGGLES = [
   'spinnerSuffix',
   'compact',
+  'animations',
   'useSvg',
   'useRaster',
-  'animations',
   'visuals.cards',
   'visuals.pills',
   'visuals.gantt',
   'visuals.sparkline',
   'visuals.contextDonut',
-  'visuals.heatStrip',
   'visuals.failedTestSnippet',
   'estimate.enabled',
   'attention.band',
@@ -438,21 +474,21 @@ const TOGGLES = [
   'health.parseTestOutput',
   'health.gitStatus',
   'health.showCost',
-  'showToolBadge',
   'redactCommands',
   'idleTimer',
 ]
 
-function ConfigTab(v: View) {
+function ConfigDetail(v: View) {
   const { k } = v
-  const { Box, Text, Button } = k.els
+  const { Text, Button } = k.els
   const cfg = k.cfg
   const enumRows = Object.entries(CHOICES).map(([path, values]) => {
     const current = String(getPath(cfg, path))
     const next = values[(values.indexOf(current) + 1) % values.length]!
     return (
       <Button key={`cfg-${path}`} plain onPress={() => v.actions.set(path, next)}>
-        {path}: <Text color={resolve('accent', cfg)}>{current}</Text>
+        {path.padEnd(26)}
+        <Text color={resolve('accent', cfg)}>{current}</Text>
       </Button>
     )
   })
@@ -464,9 +500,5 @@ function ConfigTab(v: View) {
       </Button>
     )
   })
-  return Card(k, 'Config', 'press to change', [
-    <Box flexDirection="column">{enumRows}</Box>,
-    <Box flexDirection="column">{toggleRows}</Box>,
-    <Text dimColor>{'Numbers and lists: /watch config set <path> <value>. Project defaults: .claude/watcher.json'}</Text>,
-  ])
+  return Card(k, 'config', 'Settings', 'press to change', [...enumRows, ...toggleRows, <Text dimColor>{'Numbers and lists: /watch config set <path> <value>'}</Text>])
 }

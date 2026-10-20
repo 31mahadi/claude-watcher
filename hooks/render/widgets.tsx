@@ -1,9 +1,9 @@
 import type { WatchConfig } from '../../types'
-import { css, hex, resolve, type Semantic } from './colors'
+import { css, hex, resolve, TRACK_CSS, TRACK_HEX, type Semantic } from './colors'
 import * as raster from './raster'
 import * as svg from './svg'
 
-// Element constructors differ per surface; widgets only reach for the ones they check exist.
+// Element constructors differ per surface; widgets check what exists and fall back to text.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Els = Record<string, any>
 
@@ -14,13 +14,15 @@ export type Kit = {
   columns: number
 }
 
-const TRACK = 0x30363d
-
 export const hasSvg = (k: Kit) => k.cfg.useSvg && 'Svg' in k.els
 export const hasRaster = (k: Kit) => k.cfg.useRaster && 'Raster' in k.els
 
+// Width available inside a card (border + padding take 4 columns).
+export const inner = (k: Kit) => Math.max(10, k.columns - (cardsOn(k) ? 4 : 0))
+const cardsOn = (k: Kit) => k.cfg.visuals.cards && k.cfg.theme !== 'minimal' && !k.cfg.compact
+
 const GLYPHS: Record<WatchConfig['barStyle'], [string, string]> = {
-  blocks: ['█', '░'],
+  blocks: ['━', '─'],
   dots: ['●', '○'],
   ascii: ['#', '-'],
 }
@@ -31,127 +33,136 @@ export function textBar(fraction: number, width: number, style: WatchConfig['bar
   return on.repeat(filled) + off.repeat(Math.max(0, width - filled))
 }
 
-export function Bar(k: Kit, key: string, fraction: number, sem: Semantic = 'accent', label?: string) {
+// Progress bar that fills the card, with a right-aligned dim label.
+export function Bar(k: Kit, key: string, fraction: number, sem: Semantic, label: string) {
   const { Box, Text, Svg, Raster } = k.els
-  const width = Math.max(4, Math.min(k.cfg.barWidth, k.columns - 8))
-  const tail = label ?? `${Math.round(fraction * 100)}%`
+  const width = Math.max(6, inner(k) - label.length - 1)
+  let bar
   if (hasSvg(k)) {
-    return (
-      <Box flexDirection="row" gap={1} alignItems="center">
-        <Svg source={svg.bar(fraction, css(sem, k.cfg))} alt={`${textBar(fraction, width, 'ascii')} ${tail}`} width={width} height={1} />
-        <Text dimColor>{tail}</Text>
-      </Box>
-    )
-  }
-  if (hasRaster(k)) {
-    const g = raster.bar(fraction, width, hex(sem, k.cfg), TRACK)
-    return (
-      <Box flexDirection="row" gap={1}>
-        <Raster key={key} columns={g.columns} rows={g.rows} cells={g.cells} />
-        <Text dimColor>{tail}</Text>
-      </Box>
-    )
+    bar = <Svg source={svg.bar(fraction, css(sem, k.cfg), TRACK_CSS, width * 8, 6)} alt={textBar(fraction, width, 'ascii')} width={width} height={1} />
+  } else if (hasRaster(k)) {
+    const g = raster.bar(fraction, width, hex(sem, k.cfg), TRACK_HEX)
+    bar = <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
+  } else {
+    bar = <Text color={resolve(sem, k.cfg)}>{textBar(fraction, width, k.cfg.barStyle)}</Text>
   }
   return (
-    <Text>
-      <Text color={resolve(sem, k.cfg)}>{textBar(fraction, width, k.cfg.barStyle)}</Text> <Text dimColor>{tail}</Text>
-    </Text>
+    <Box flexDirection="row" gap={1}>
+      {bar}
+      <Text dimColor>{label}</Text>
+    </Box>
   )
 }
 
-export function Pill(k: Kit, text: string, sem: Semantic) {
+// Short bold chip. Colour only when it carries state.
+export function Pill(k: Kit, text: string, sem: Semantic | undefined) {
   const { Text } = k.els
-  if (!k.cfg.visuals.pills) return <Text color={resolve(sem, k.cfg)}>{text}</Text>
+  if (!sem || sem === 'dim') return <Text dimColor>{`[${text}]`}</Text>
+  if (!k.cfg.visuals.pills) return <Text color={resolve(sem, k.cfg)}>{`[${text}]`}</Text>
   return (
-    <Text color="black" backgroundColor={resolve(sem, k.cfg)}>
+    <Text bold inverse color={resolve(sem, k.cfg)}>
       {` ${text} `}
     </Text>
   )
 }
 
-export function Card(k: Kit, title: string, right: string | undefined, children: unknown[]) {
+// Same card everywhere: rounded border, 1-cell padding, bold header, body. No gaps inside.
+export function Card(k: Kit, key: string, title: unknown, right: string | undefined, body: unknown[], sem?: Semantic) {
   const { Box, Text } = k.els
   const header = (
     <Box flexDirection="row" justifyContent="space-between">
-      <Text bold>{title}</Text>
+      {typeof title === 'string' ? <Text bold>{title}</Text> : title}
       {right ? <Text dimColor>{right}</Text> : null}
     </Box>
   )
-  if (!k.cfg.visuals.cards || k.cfg.theme === 'minimal' || k.cfg.compact) {
+  if (!cardsOn(k)) {
     return (
-      <Box flexDirection="column">
+      <Box key={key} flexDirection="column">
         {header}
-        {children}
+        {body}
       </Box>
     )
   }
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={resolve('dim', k.cfg)} paddingX={1}>
+    <Box key={key} flexDirection="column" borderStyle="round" borderColor={resolve(sem ?? 'dim', k.cfg)} paddingX={1}>
       {header}
-      {children}
+      {body}
     </Box>
   )
 }
 
+// A label on the left, a fixed-width right-aligned value column.
+export function Row(k: Kit, left: unknown, right: string, valueWidth = 7) {
+  const { Box, Text } = k.els
+  return (
+    <Box flexDirection="row">
+      <Box flexGrow={1} flexShrink={1}>
+        {left}
+      </Box>
+      <Box width={valueWidth} justifyContent="flex-end">
+        <Text dimColor>{right}</Text>
+      </Box>
+    </Box>
+  )
+}
+
+export function Mark(k: Kit, glyph: string, sem: Semantic) {
+  const { Text } = k.els
+  return <Text color={resolve(sem, k.cfg)}>{glyph}</Text>
+}
+
+// The one motion: a Client pulse where the surface has Client, a still dot elsewhere.
+export function Pulse(k: Kit, sem: Semantic) {
+  const { Client, Text } = k.els
+  if (k.cfg.animations && Client) return <Client key="pulse" module="../client/pulse.ts" props={{ color: resolve(sem, k.cfg) }} width={1} />
+  return <Text color={resolve(sem, k.cfg)}>●</Text>
+}
+
 export function Sparkline(k: Kit, key: string, values: readonly number[]) {
   const { Text, Svg, Raster } = k.els
-  if (!k.cfg.visuals.sparkline || values.length < 2) return null
-  if (hasSvg(k)) return <Svg source={svg.sparkline(values, css('accent', k.cfg))} alt="tool durations" width={24} height={2} />
+  if (!k.cfg.visuals.sparkline || values.length < 3) return null
+  const width = Math.min(inner(k), 40)
+  if (hasSvg(k)) return <Svg source={svg.sparkline(values, css('accent', k.cfg), width * 8, 16)} alt="call durations" width={width} height={1} />
   if (hasRaster(k)) {
-    const g = raster.sparkline(values.slice(-Math.max(2, k.columns - 4)), hex('accent', k.cfg))
+    const g = raster.sparkline(values.slice(-width), hex('accent', k.cfg))
     return <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
   }
   const max = Math.max(...values, 1)
-  return <Text color={resolve('accent', k.cfg)}>{values.map(v => '▁▂▃▄▅▆▇█'[Math.min(7, Math.floor((v / max) * 7.999))]).join('')}</Text>
-}
-
-export function HeatStrip(k: Kit, key: string, outcomes: readonly Semantic[]) {
-  const { Text, Svg, Raster } = k.els
-  if (!k.cfg.visuals.heatStrip || outcomes.length === 0) return null
-  if (hasSvg(k)) return <Svg source={svg.heatStrip(outcomes.map(o => css(o, k.cfg)))} alt="recent calls" width={Math.min(40, outcomes.length * 2)} height={1} />
-  if (hasRaster(k)) {
-    const g = raster.heatStrip(outcomes.map(o => hex(o, k.cfg)))
-    return <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
-  }
-  return (
-    <Text>
-      {outcomes.map(o => (
-        <Text color={resolve(o, k.cfg)}>■</Text>
-      ))}
-    </Text>
-  )
+  return <Text dimColor>{values.slice(-width).map(v => '▁▂▃▄▅▆▇█'[Math.min(7, Math.floor((v / max) * 7.999))]).join('')}</Text>
 }
 
 export function Donut(k: Kit, fraction: number, sem: Semantic) {
   const { Text, Svg } = k.els
   if (k.cfg.visuals.contextDonut && hasSvg(k)) {
-    return <Svg source={svg.donut(fraction, css(sem, k.cfg))} alt={`${Math.round(fraction * 100)}%`} width={6} height={3} />
+    return <Svg source={svg.donut(fraction, css(sem, k.cfg), TRACK_CSS)} alt={`${Math.round(fraction * 100)}%`} width={6} height={3} />
   }
-  return <Text color={resolve(sem, k.cfg)}>{textBar(fraction, 10, 'blocks').replace(/█/g, '▓')}</Text>
+  return <Text color={resolve(sem, k.cfg)}>{textBar(fraction, 10, k.cfg.barStyle)}</Text>
 }
 
-export type GanttLane = { label: string; start: number; end: number; sem: Semantic; failed?: boolean; right?: string }
+export type GanttLane = { label: string; start: number; end: number; sem: Semantic; failed?: boolean }
 
 export function Gantt(k: Kit, key: string, lanes: readonly GanttLane[], from: number, to: number) {
   const { Box, Text, Svg, Raster } = k.els
-  if (!k.cfg.visuals.gantt || lanes.length === 0) return null
+  if (!k.cfg.visuals.gantt || lanes.length < 2) return null
+  const width = inner(k)
   if (hasSvg(k)) {
     const source = svg.gantt(
       lanes.map(l => ({ label: l.label, start: l.start, end: l.end, color: css(l.sem, k.cfg), outline: l.failed ? css('attention', k.cfg) : undefined })),
       from,
       to,
+      width * 8,
+      90,
     )
-    return <Svg source={source} alt={lanes.map(l => l.label).join(', ')} width={Math.max(20, k.columns - 2)} height={lanes.length + 1} />
+    return <Svg source={source} alt={lanes.map(l => l.label).join(', ')} width={width} height={lanes.length + 1} />
   }
   if (hasRaster(k)) {
     const labelW = 10
-    const width = Math.max(10, Math.min(60, k.columns - labelW - 4))
     const g = raster.swimlanes(
       lanes.map(l => ({ start: l.start, end: l.end, fg: hex(l.sem, k.cfg) })),
       from,
       to,
-      width,
-      TRACK,
+      Math.max(10, width - labelW - 1),
+      TRACK_HEX,
     )
     return (
       <Box flexDirection="row" gap={1}>
@@ -167,10 +178,4 @@ export function Gantt(k: Kit, key: string, lanes: readonly GanttLane[], from: nu
     )
   }
   return null
-}
-
-const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-
-export function spinGlyph(cfg: WatchConfig, tick: number): string {
-  return cfg.animations ? SPIN[tick % SPIN.length]! : '●'
 }

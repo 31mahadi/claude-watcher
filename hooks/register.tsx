@@ -65,6 +65,10 @@ async function resetHistory($: $): Promise<void> {
 
 async function setTab($: $, tab: WatchTab): Promise<void> {
   await update($, ui, u => ({ ...u, tab }))
+  if (tab === 'sessions') {
+    const list = await readPeers($, await $.clock.now())
+    await update($, peers, () => list)
+  }
 }
 
 const PREFIX = 'session:'
@@ -115,7 +119,8 @@ async function tickOnce($: $) {
   const cfg = await read($, config)
   const open = await isPaneOpen($)
   await update($, ui, u => ({ ...u, tick: u.tick + 1 }))
-  if (open && cfg.sessions.shareState && (await read($, ui)).tab === 'sessions') {
+  const u = await read($, ui)
+  if (open && cfg.sessions.shareState && (u.tab === 'sessions' || u.tick % 5 === 0)) {
     const now = await $.clock.now()
     const list = await readPeers($, now)
     await update($, peers, () => list)
@@ -564,10 +569,6 @@ export const register: Register = on => {
         tab: tab => {
           void (async () => {
             await setTab($, tab)
-            if (tab === 'sessions') {
-              const list = await readPeers($, await $.clock.now())
-              await update($, peers, () => list)
-            }
           })()
         },
         scope: scope => void update($, ui, u => ({ ...u, scope })),
@@ -606,7 +607,7 @@ export const register: Register = on => {
     const hint = s.health.needsYou.kind === 'permission' ? ' — ↑ to review' : ''
     return (
       <Box>
-        <Text color={cfg.colors.attention} bold>
+        <Text color={cfg.colors.warn || 'warning'} bold>
           ⏸ {needsYouText(s, now)}
           {hint}
         </Text>

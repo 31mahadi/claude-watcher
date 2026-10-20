@@ -254,7 +254,7 @@ function nowSem(v: View): Semantic {
 
 // Step list colours: done soft green, running bright blue on a faint band, waiting grey.
 const STEP_COLOR = { doneMark: '#3fb950', done: '#7ee2a0', run: '#79c0ff', runBand: '#111d2e', wait: '#6e7681' }
-const STEPS_SHOWN = 12
+const STEPS_SHOWN = 20
 
 // Steps in execution order, one line each. Past STEPS_SHOWN, done steps fold into one line.
 function StepList(v: View, plan: WatchPlan, live = true): unknown[] {
@@ -377,7 +377,7 @@ function NowBlock(v: View, compact: boolean): unknown[] {
     nowRows.push(IdleLine(v))
   }
   if (s.agents.length) {
-    const chart = Gantt(k, 'timeline', lanes(v), ganttFrom(v), now)
+    const chart = Gantt(k, 'timeline', lanes(v), ganttFrom(v), ganttTo(v))
     nowRows.push(chart ?? <Box key="agents" flexDirection="column">{s.agents.slice(-4).map(a => agentRow(v, a))}</Box>)
   }
   nowRows.push(...LiveTree(v))
@@ -1014,8 +1014,16 @@ function agentRow(v: View, a: WatchSnapshot['agents'][number]) {
   )
 }
 
-function lanes(v: View): GanttLane[] {
+// The chart's right edge: now while a turn runs, frozen at the last end once it stops.
+function ganttTo(v: View): number {
   const { s, now } = v
+  if (isActive(s) || s.agents.some(a => a.endedAt === undefined)) return now
+  return Math.max(s.turnEndedAt ?? 0, ...s.agents.map(a => a.endedAt ?? 0)) || now
+}
+
+function lanes(v: View): GanttLane[] {
+  const { s } = v
+  const now = ganttTo(v)
   return [
     ...(s.turnStartedAt !== null ? [{ label: 'main', start: s.turnStartedAt, end: s.turnEndedAt ?? now, sem: phaseSem(s.phase) }] : []),
     ...s.agents.map(a => ({ label: a.type, start: a.startedAt, end: a.endedAt ?? now, sem: agentSem(a), failed: a.phase === 'failed' })),
@@ -1023,7 +1031,8 @@ function lanes(v: View): GanttLane[] {
 }
 
 function ganttFrom(v: View): number {
-  const { s, now, k } = v
+  const { s, k } = v
+  const now = ganttTo(v)
   return Math.max(now - k.cfg.visuals.ganttWindowMinutes * 60_000, Math.min(s.turnStartedAt ?? now, ...s.agents.map(a => a.startedAt)))
 }
 
@@ -1033,7 +1042,7 @@ function TimelineSection(v: View) {
   if (s.agents.length === 0) return null
   const running = s.agents.filter(a => a.phase === 'running')
   const failed = s.agents.filter(a => a.phase === 'failed')
-  const chart = Gantt(k, 'timeline', lanes(v), ganttFrom(v), now)
+  const chart = Gantt(k, 'timeline', lanes(v), ganttFrom(v), ganttTo(v))
   const rows = chart ? [chart, ...[...running, ...failed].slice(0, 4).map(a => agentRow(v, a))] : s.agents.slice(-4).map(a => agentRow(v, a))
   return Section(k, 'agents', 'AGENTS', rows)
 }
@@ -1219,7 +1228,7 @@ function AgentsDetail(v: View) {
   const { s, k, now } = v
   const { Text } = k.els
   if (s.agents.length === 0) return Section(k, 'agents', 'AGENTS', [<Text dimColor>No subagents this session.</Text>])
-  return Section(k, 'agents', 'AGENTS', [Gantt(k, 'agents-gantt', lanes(v), ganttFrom(v), now), ...s.agents.map(a => agentRow(v, a))])
+  return Section(k, 'agents', 'AGENTS', [Gantt(k, 'agents-gantt', lanes(v), ganttFrom(v), ganttTo(v)), ...s.agents.map(a => agentRow(v, a))])
 }
 
 export function visiblePeers(peers: readonly WatchPeer[], cfg: WatchConfig, now: number): WatchPeer[] {

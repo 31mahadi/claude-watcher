@@ -14,22 +14,27 @@ export function bar(fraction: number, color: string, track = '#30363d', width = 
 export type Lane = { label: string; start: number; end: number; color: string; outline?: string }
 
 // Swimlanes over [from, to]. One row per lane.
-export function gantt(lanes: readonly Lane[], from: number, to: number, width = 300, labelWidth = 80): string {
-  const row = 18
+// Swimlanes over [from, to]: one row per lane, label left, bar right, a "now" edge.
+export function gantt(lanes: readonly Lane[], from: number, to: number, width = 300, labelWidth = 96): string {
+  const row = 16
   const height = Math.max(row, lanes.length * row)
   const span = Math.max(1, to - from)
   const plot = width - labelWidth
+  const font = 'font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11"'
+  const label = (t: string) => (t.length > 15 ? `${t.slice(0, 14)}…` : t)
   const parts = lanes.map((lane, i) => {
     const x = labelWidth + ((Math.max(lane.start, from) - from) / span) * plot
-    const w = Math.max(2, ((Math.min(lane.end, to) - Math.max(lane.start, from)) / span) * plot)
+    const w = Math.max(3, ((Math.min(lane.end, to) - Math.max(lane.start, from)) / span) * plot)
     const y = i * row
     const stroke = lane.outline ? ` stroke="${lane.outline}" stroke-width="1.5"` : ''
     return (
-      `<text x="0" y="${y + 13}" font-size="11" fill="#8b949e" font-family="monospace">${esc(lane.label.slice(0, 11))}</text>` +
-      `<rect x="${x.toFixed(1)}" y="${y + 3}" width="${w.toFixed(1)}" height="${row - 6}" rx="3" fill="${lane.color}"${stroke}/>`
+      `<text x="0" y="${y + 11.5}" ${font} fill="#8b949e">${esc(label(lane.label))}</text>` +
+      `<rect x="${labelWidth}" y="${y + 7}" width="${plot}" height="1" fill="#30363d"/>` +
+      `<rect x="${x.toFixed(1)}" y="${y + 3}" width="${w.toFixed(1)}" height="${row - 6}" rx="2" fill="${lane.color}"${stroke}/>`
     )
   })
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join('')}</svg>`
+  const nowLine = `<rect x="${width - 1}" y="0" width="1" height="${height}" fill="#8b949e" opacity="0.5"/>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join('')}${nowLine}</svg>`
 }
 
 export function sparkline(values: readonly number[], color: string, width = 160, height = 24): string {

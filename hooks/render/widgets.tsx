@@ -152,7 +152,7 @@ export function Gantt(k: Kit, key: string, lanes: readonly GanttLane[], from: nu
       from,
       to,
       width * 7,
-      90,
+      96,
     )
     return <Svg source={source} alt={lanes.map(l => l.label).join(', ')} />
   }

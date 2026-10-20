@@ -44,15 +44,30 @@ claude --plugin-dir ./claude-watcher
 
 ## Dashboard
 
-The pane answers three questions at a glance: does anything need me, how far along is the job, and is it stuck.
+Claude Watcher is a live view of a plan being executed: ticket → plan → Claude works through it, running tests → done. At a glance it answers: which step is Claude on, what is it doing inside that step, did the step's tests pass, and does anything need me.
 
-- **Attention** (top, only when needed): a permission prompt or question, failing tests with the failure output, or a stop error. The only red or amber on the dashboard.
-- **Goal**: the prompt's first line, or the running todo item, with the turn's elapsed time. When Claude keeps a todo list, a bar shows `step 3 of 5` and time left. Below it, the current call, its elapsed time and its usual duration, taken from past runs of the same command or the same kind of step (tests, build, install, lint, git, edits, reads). A call running past twice its usual time, or no activity for 90 seconds, shows an amber "⏳" line.
-- **Timeline**: one swimlane chart for the main loop and every subagent, with rows under it for agents that are running or failed.
-- **Status**: context %, git branch and dirty files, test state.
-- **Receipt** once the turn ends: calls, steps, tests, files edited, model, context, cost. Then nothing moves.
+- **Attention** (top, only when needed, the only red or amber card): a permission prompt or question, failing tests with the failure output and the step they belong to, a stop error, or a stall (no tool activity for 90 seconds, or a command running past twice its usual time).
+- **Plan**: ticket key and title, elapsed time, and a bar `3 / 5 · ~8m left`. Done steps show ✓ and their time (more than six collapse to one line). The running step is expanded: its live command with "usually ~1:30" or "first run", files edited and calls made in this step, its test result, and its checkbox sub-steps. Pending steps follow, four at most. When the turn ends with the plan unfinished, a receipt line replaces the live command.
+- **Timeline**: one swimlane chart for the main loop and every subagent, with rows for agents that are running or failed.
+- **Health line**: context % with a per-turn trend, git branch and dirty files, last test result, and a link when another session needs you.
 
-Detail views: `/watch plan`, `/watch agents`, `/watch calls` (every tool call with durations), `/watch sessions`, `/watch health`, `/watch config`.
+### Where the plan comes from
+
+Highest priority first. A file-based plan survives turn end, compaction, `/clear` and resume.
+
+| Source | Detected when | Steps | Done when |
+|---|---|---|---|
+| superpowers plan file | Claude reads or edits `docs/superpowers/plans/*.md` (or a file titled "… Implementation Plan") | `### Task N:` headings, with their `- [ ]` steps | its ledger `.superpowers/sdd/<plan>/progress.md` says `Task N: complete`, or every checkbox is ticked |
+| Plan mode | `ExitPlanMode` after plan mode named a plan file | headings or list items | checkboxes, or a matching todo |
+| Todo list | `TodoWrite` | each todo | `completed` |
+| Task tool | `TaskCreated` / `TaskCompleted` | each task | `TaskCompleted` |
+| Prompt | every turn | none; the first line is the title | the turn ends |
+
+With a plan file active, todos are matched to its tasks by title; extra todos become sub-steps of the running task. The ticket key (`CAM-1234`) comes from the plan title, the branch name or the prompt.
+
+Every tool call, edited file, test result and subagent is credited to the step running at that moment.
+
+Detail views: `/watch plan` (every step with its calls, files, tests and failure output), `/watch agents`, `/watch calls`, `/watch sessions`, `/watch health`, `/watch config`.
 
 ## Configuration
 

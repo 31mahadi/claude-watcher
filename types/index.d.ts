@@ -70,6 +70,31 @@ export type WatchHealth = {
   editedFiles: string[]
   dirtyFiles?: number
   needsYou: WatchNeedsYou | null
+  // Context % at each turn end, oldest first, last 20.
+  contextHistory: number[]
+}
+
+export type WatchPlanStep = {
+  id: string
+  title: string
+  status: 'pending' | 'running' | 'done' | 'failed'
+  startedAt?: number
+  endedAt?: number
+  substeps?: { title: string; done: boolean }[]
+  calls: number
+  editedFiles: string[]
+  lastTest?: WatchTestResult
+  agentIds: string[]
+}
+
+export type WatchPlan = {
+  source: 'file' | 'planmode' | 'todo' | 'task' | 'prompt'
+  title: string
+  ticket?: string
+  path?: string
+  steps: WatchPlanStep[]
+  startedAt: number
+  endedAt?: number
 }
 
 export type WatchSnapshot = {
@@ -91,6 +116,7 @@ export type WatchSnapshot = {
   tasks: WatchTask[]
   agents: WatchAgent[]
   health: WatchHealth
+  plan: WatchPlan | null
 }
 
 export type WatchPeer = {

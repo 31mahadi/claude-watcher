@@ -13,7 +13,8 @@ export const EMPTY_SNAP: WatchSnapshot = {
   recent: [],
   tasks: [],
   agents: [],
-  health: { compactions: 0, editedFiles: [], needsYou: null },
+  health: { compactions: 0, editedFiles: [], needsYou: null, contextHistory: [] },
+  plan: null,
 }
 
 // Reducers: pure, (snapshot, …) → snapshot.

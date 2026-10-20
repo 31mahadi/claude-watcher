@@ -427,6 +427,11 @@ function turnTimes(t: WatchHistoryTurn): string {
 
 const BRANCHES_SHOWN = 4
 
+// A command as one short line: its first line, cut to `max`.
+function oneLine(text: string, max = 60): string {
+  return truncate((text.split('\n')[0] ?? '').trim(), max)
+}
+
 // A finished turn's branches: steps it moved, its test result, agents, files.
 function turnBranches(k: Kit, t: WatchHistoryTurn): unknown[] {
   const { Text } = k.els
@@ -440,8 +445,8 @@ function turnBranches(k: Kit, t: WatchHistoryTurn): unknown[] {
   if (t.tests) {
     items.push(
       t.tests.ok
-        ? { glyph: '✓', color: TINT.ok.fg, label: 'tests', value: `${t.tests.passed ? `${t.tests.passed} passed · ` : ''}${t.tests.command}` }
-        : { glyph: '✗', color: TINT.attention.fg, label: 'tests', value: `${t.tests.failed} failed · ${t.tests.command}` },
+        ? { glyph: '✓', color: TINT.ok.fg, label: 'tests', value: `${t.tests.passed ? `${t.tests.passed} passed · ` : ''}${oneLine(t.tests.command)}` }
+        : { glyph: '✗', color: TINT.attention.fg, label: 'tests', value: `${t.tests.failed} failed · ${oneLine(t.tests.command)}` },
     )
   }
   for (const a of t.agents) items.push({ glyph: '⚙', color: a.ok ? TINT.ok.fg : TINT.attention.fg, label: 'agent', value: `${a.label} ${time(a.durationMs, 'human')} ${a.ok ? '✓' : '✗'}` })
@@ -1031,7 +1036,7 @@ function turnDetail(v: View, t: WatchHistoryTurn, full: boolean): unknown[] {
   if (t.files.length) lines.push(<Text dimColor wrap="truncate-end">{`${pad}edited ${t.files.map(basename).join(', ')}`}</Text>)
   if (t.tests) {
     lines.push(
-      t.tests.ok ? <Text dimColor>{`${pad}tests ✓${t.tests.passed ? ` ${t.tests.passed}` : ''}`}</Text> : <Text color={resolve('attention', cfg)}>{`${pad}tests ✗ ${t.tests.failed} failed · ${truncate(t.tests.command, 40)}`}</Text>,
+      t.tests.ok ? <Text dimColor>{`${pad}tests ✓${t.tests.passed ? ` ${t.tests.passed}` : ''}`}</Text> : <Text color={resolve('attention', cfg)}>{`${pad}tests ✗ ${t.tests.failed} failed · ${oneLine(t.tests.command, 40)}`}</Text>,
     )
     if (!t.tests.ok && t.tests.snippet && cfg.visuals.failedTestSnippet) lines.push(Code ? <Code source={t.tests.snippet} /> : <Text dimColor>{t.tests.snippet}</Text>)
   }

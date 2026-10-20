@@ -189,7 +189,12 @@ function NowCard(v: View) {
     body.push(Row(k, <Text wrap="truncate-end">{truncate(s.current.label, inner(k) - 9)}</Text>, time(now - s.current.startedAt, cfg.timeFormat)))
     if (eta) body.push(Bar(k, 'now-bar', eta.fraction, eta.remainingMs === 0 ? 'warn' : 'accent', etaText(eta, cfg) ?? ''))
   } else {
-    body.push(<Text dimColor>{s.toolCalls ? `${s.toolCalls} tool calls so far` : 'Thinking…'}</Text>)
+    const last = s.recent[s.recent.length - 1]
+    if (last && last.durationMs !== undefined) {
+      body.push(<Text dimColor wrap="truncate-end">{`last: ${truncate(last.label, inner(k) - 20)} · ${ago(now - (last.startedAt + last.durationMs))}`}</Text>)
+    } else if (s.toolCalls) {
+      body.push(<Text dimColor>{`${s.toolCalls} tool calls so far`}</Text>)
+    }
   }
   return Card(k, 'now', title, right, body, sem)
 }
@@ -319,19 +324,25 @@ function StatusPills(v: View) {
   const pills = [
     s.branch ? Pill(k, `${s.branch}${hl.dirtyFiles ? ` · ${hl.dirtyFiles} dirty` : ''}`, undefined) : null,
     hl.contextPct !== undefined ? Pill(k, `ctx ${pct(hl.contextPct)}`, ctxSem) : null,
-    t ? Pill(k, t.ok ? `tests ${t.passed} ✓` : `tests ${t.failed} ✗`, t.ok ? 'ok' : 'attention') : null,
+    t ? Pill(k, t.ok ? (t.passed ? `${t.passed} tests ✓` : 'tests ✓') : `${t.failed} failed ✗`, t.ok ? 'ok' : 'attention') : null,
     hl.lastLint && !hl.lastLint.ok ? Pill(k, 'lint ✗', 'attention') : null,
     hl.lastBuild && !hl.lastBuild.ok ? Pill(k, 'build ✗', 'attention') : null,
     hl.lastError ? Pill(k, hl.lastError.kind, 'attention') : null,
-    s.model ? Pill(k, s.model, undefined) : null,
+    s.model ? Pill(k, shortModel(s.model), undefined) : null,
     k.cfg.health.showCost && hl.costUsd !== undefined ? Pill(k, `$${hl.costUsd.toFixed(2)}`, undefined) : null,
   ].filter(Boolean)
   if (pills.length === 0) return null
   return (
-    <Box key="pills" flexDirection="row" gap={1} flexWrap="wrap">
+    <Box key="pills" flexDirection="row" columnGap={2} flexWrap="wrap">
       {pills.slice(0, 6)}
     </Box>
   )
+}
+
+// "claude-opus-5-5" → "opus 5.5"; other ids pass through.
+export function shortModel(id: string): string {
+  const m = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(id)
+  return m ? `${m[1]} ${m[2]}.${m[3]}` : id.replace(/^claude-/, '')
 }
 
 function OtherSessions(v: View) {

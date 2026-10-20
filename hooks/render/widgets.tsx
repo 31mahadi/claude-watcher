@@ -57,8 +57,8 @@ export function Bar(k: Kit, key: string, fraction: number, sem: Semantic, label:
 // Short bold chip. Colour only when it carries state.
 export function Pill(k: Kit, text: string, sem: Semantic | undefined) {
   const { Text } = k.els
-  if (!sem || sem === 'dim') return <Text dimColor>{`[${text}]`}</Text>
-  if (!k.cfg.visuals.pills) return <Text color={resolve(sem, k.cfg)}>{`[${text}]`}</Text>
+  if (!sem || sem === 'dim') return <Text dimColor>{text}</Text>
+  if (!k.cfg.visuals.pills) return <Text color={resolve(sem, k.cfg)}>{text}</Text>
   return (
     <Text bold inverse color={resolve(sem, k.cfg)}>
       {` ${text} `}

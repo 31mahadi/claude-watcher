@@ -28,6 +28,10 @@ export function parseTestOutput(command: string, output: string, exitCode: numbe
     if (passed || failed) return done('pytest', passed, failed, text)
   }
 
+  // bun / claude plugin test: " 29 pass" / " 0 fail" on their own lines
+  m = text.match(/^\s*(\d+) pass\s*$/m)
+  if (m) return done('bun', num(m), num(text.match(/^\s*(\d+) fail\s*$/m)), text)
+
   // cargo: "test result: FAILED. 39 passed; 3 failed;"
   m = text.match(/test result: \w+\. (\d+) passed; (\d+) failed/)
   if (m) return done('cargo', num(m, 1), num(m, 2), text)

@@ -1,4 +1,5 @@
-import type { WatchCall, WatchConfig, WatchPeer, WatchPlan, WatchPlanStep, WatchSnapshot, WatchTab, WatchUi } from '../../types'
+import type { WatchCall, WatchConfig, WatchHistoryEvent, WatchHistoryTurn, WatchPeer, WatchPlan, WatchPlanStep, WatchSnapshot, WatchTab, WatchUi } from '../../types'
+import { filterHistory, isProblem } from '../history'
 import { CHOICES, getPath } from '../config'
 import { estimateMs } from '../estimate'
 import { planProgress } from '../plan'
@@ -18,11 +19,13 @@ export type View = {
     scope: (scope: 'this' | 'all') => void
     set: (path: string, value: unknown) => void
     copy: (text: string) => void
+    toggle: (id: string) => void
+    cycleFilter: () => void
   }
 }
 
 // 'turn' is the adaptive dashboard; the others are detail views reached by /watch <tab>.
-export const TABS: readonly WatchTab[] = ['turn', 'plan', 'agents', 'calls', 'sessions', 'health', 'config']
+export const TABS: readonly WatchTab[] = ['turn', 'plan', 'agents', 'calls', 'history', 'sessions', 'health', 'config']
 
 // The VS Code side panel is ~45-55 columns; only truly tiny panes go compact.
 const COMPACT_BELOW = 36
@@ -101,9 +104,13 @@ export function Pane(v: View) {
   const { Box, Button, Text } = v.k.els
   const gap = v.k.cfg.theme === 'dense' ? 0 : 1
   if (v.ui.tab === 'turn') {
+    const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
+    // Live state on top; history pinned below it, pushed to the bottom by a spacer.
     return (
-      <Box flexDirection="column" gap={gap}>
+      <Box flexDirection="column" gap={gap} flexGrow={1}>
         {Dashboard(v)}
+        <Box key="spacer" flexGrow={1} />
+        {HistorySection(v, compact ? 'line' : 'dashboard')}
       </Box>
     )
   }
@@ -114,6 +121,8 @@ export function Pane(v: View) {
         ? AgentsDetail(v)
         : v.ui.tab === 'calls'
           ? CallsDetail(v)
+          : v.ui.tab === 'history'
+          ? HistorySection(v, 'full')
           : v.ui.tab === 'sessions'
           ? SessionsDetail(v)
           : v.ui.tab === 'health'
@@ -421,6 +430,121 @@ function TimelineCard(v: View) {
 export function shortModel(id: string): string {
   const m = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(id)
   return m ? `${m[1]} ${m[2]}.${m[3]}` : id.replace(/^claude-/, '')
+}
+
+// ── History: every turn and session event, collapsed rows that expand on press ──
+
+const HISTORY_ROWS = 12
+const CALLS_SHOWN = 10
+const EVENT_ICON: Record<WatchHistoryEvent['icon'], string> = { compact: '⇣', model: '⚙', error: '✗', plan: '☰' }
+
+function clock(at: number): string {
+  const d = new Date(at)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function turnSummary(t: WatchHistoryTurn, n: number, cfg: WatchConfig): string {
+  return [
+    `Turn ${n} · ${t.title || '(no prompt)'}`,
+    t.ended ? time(t.durationMs ?? 0, cfg.timeFormat) : 'running',
+    `${t.calls.length + t.moreCalls} calls`,
+    t.tests ? (t.tests.ok ? 'tests ✓' : 'tests ✗') : undefined,
+    t.files.length ? `${t.files.length} file${t.files.length === 1 ? '' : 's'}` : undefined,
+    t.waitMs ? `waited ${time(t.waitMs, cfg.timeFormat)}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+function turnDetail(v: View, t: WatchHistoryTurn, full: boolean): unknown[] {
+  const { k } = v
+  const { Text, Code } = k.els
+  const cfg = k.cfg
+  const pad = '     '
+  const lines: unknown[] = []
+  for (const st of t.steps) {
+    const [glyph, sem] = st.status === 'done' ? ['✓', 'ok'] : st.status === 'failed' ? ['✗', 'attention'] : st.status === 'running' ? ['▶', 'accent'] : ['○', 'dim']
+    lines.push(<Text>{pad}{Mark(k, glyph, sem as Semantic)}{` step: ${st.title}`}</Text>)
+  }
+  const calls = full ? t.calls : t.calls.slice(-CALLS_SHOWN)
+  const hidden = t.moreCalls + (t.calls.length - calls.length)
+  if (hidden > 0) lines.push(<Text dimColor>{`${pad}+${hidden} earlier calls`}</Text>)
+  for (const c of calls) {
+    const ok = c.ok !== false
+    lines.push(
+      Row(
+        k,
+        <Text wrap="truncate-end">
+          {pad}
+          {Mark(k, ok ? '✓' : '✗', ok ? 'ok' : 'attention')} {truncate(c.label, inner(k) - 18)}
+          {c.note && !c.note.startsWith('timeout=') ? <Text dimColor>{`  ${c.note}`}</Text> : null}
+        </Text>,
+        c.durationMs !== undefined ? seconds(c.durationMs) : '',
+      ),
+    )
+  }
+  if (t.files.length) lines.push(<Text dimColor wrap="truncate-end">{`${pad}edited ${t.files.map(basename).join(', ')}`}</Text>)
+  if (t.tests) {
+    lines.push(
+      t.tests.ok ? <Text dimColor>{`${pad}tests ✓ ${t.tests.passed}`}</Text> : <Text color={resolve('attention', cfg)}>{`${pad}tests ✗ ${t.tests.failed} failed · ${truncate(t.tests.command, 40)}`}</Text>,
+    )
+    if (!t.tests.ok && t.tests.snippet && cfg.visuals.failedTestSnippet) lines.push(Code ? <Code source={t.tests.snippet} /> : <Text dimColor>{t.tests.snippet}</Text>)
+  }
+  if (t.waitMs) lines.push(<Text dimColor>{`${pad}⏸ waited ${time(t.waitMs, cfg.timeFormat)} for permission`}</Text>)
+  for (const a of t.agents) lines.push(<Text dimColor>{`${pad}⚙ agent ${a.label} ${time(a.durationMs, cfg.timeFormat)} ${a.ok ? '✓' : '✗'}`}</Text>)
+  if (lines.length === 0) lines.push(<Text dimColor>{`${pad}no tool calls`}</Text>)
+  return lines
+}
+
+function HistorySection(v: View, mode: 'line' | 'dashboard' | 'full') {
+  const { k, s } = v
+  const { Box, Text, Button } = k.els
+  const cfg = k.cfg
+  const all = s.history ?? []
+  const turns = all.filter((e): e is WatchHistoryTurn => e.kind === 'turn')
+  if (all.length === 0) return null
+  if (mode === 'line') return <Text key="history" dimColor>{`History · ${turns.length} turn${turns.length === 1 ? '' : 's'} · /watch history`}</Text>
+  const filter = v.ui.historyFilter ?? 'all'
+  const shown = filterHistory(all, filter).reverse()
+  const rows = mode === 'full' ? shown : shown.slice(0, HISTORY_ROWS)
+  const number = new Map(turns.map((t, i) => [t.id, i + 1]))
+  const open = new Set(v.ui.expanded ?? [])
+  const body: unknown[] = []
+  for (const e of rows) {
+    if (e.kind === 'event') {
+      const sem: Semantic = e.icon === 'error' ? 'attention' : 'dim'
+      body.push(
+        <Text key={`hist-${e.id}`} wrap="truncate-end">
+          <Text dimColor>{`  ${clock(e.at)}  `}</Text>
+          {Mark(k, EVENT_ICON[e.icon], sem)}
+          <Text dimColor>{` ${e.text}`}</Text>
+        </Text>,
+      )
+      continue
+    }
+    const expanded = mode === 'full' || open.has(e.id)
+    const sem: Semantic = isProblem(e) ? 'attention' : e.ended ? 'dim' : 'accent'
+    body.push(
+      <Button key={`hist-${e.id}`} plain onPress={() => v.actions.toggle(e.id)}>
+        <Text dimColor>{`${expanded ? '▾' : '▸'} ${clock(e.at)}  `}</Text>
+        <Text color={sem === 'dim' ? undefined : resolve(sem, cfg)}>{turnSummary(e, number.get(e.id) ?? 0, cfg)}</Text>
+      </Button>,
+    )
+    if (expanded) body.push(...turnDetail(v, e, mode === 'full'))
+  }
+  if (shown.length > rows.length) body.push(<Text dimColor>{`+${shown.length - rows.length} older · /watch history`}</Text>)
+  if (rows.length === 0) body.push(<Text dimColor>{filter === 'problems' ? 'No problems so far.' : 'Nothing yet.'}</Text>)
+  return (
+    <Box key="history" flexDirection="column">
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text bold>History</Text>
+        <Button key="history-filter" plain onPress={() => v.actions.cycleFilter()}>
+          <Text dimColor>{`[${filter}]`}</Text>
+        </Button>
+      </Box>
+      {body}
+    </Box>
+  )
 }
 
 // ── Detail views (/watch <tab>) ──

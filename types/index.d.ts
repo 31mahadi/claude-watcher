@@ -8,7 +8,7 @@ export type WatchPhase =
   | 'error'
   | 'done'
 
-export type WatchTab = 'turn' | 'plan' | 'agents' | 'calls' | 'sessions' | 'health' | 'config'
+export type WatchTab = 'turn' | 'plan' | 'agents' | 'calls' | 'history' | 'sessions' | 'health' | 'config'
 
 export type WatchCall = {
   id: string
@@ -87,6 +87,35 @@ export type WatchPlan = {
   endedAt?: number
 }
 
+export type WatchHistoryCall = { label: string; ok?: boolean; durationMs?: number; note?: string }
+
+export type WatchHistoryTurn = {
+  kind: 'turn'
+  id: string
+  at: number
+  title: string
+  durationMs?: number
+  ended: boolean
+  failed: boolean
+  calls: WatchHistoryCall[]
+  moreCalls: number
+  files: string[]
+  tests?: { ok: boolean; passed: number; failed: number; command: string; snippet?: string }
+  steps: { title: string; status: string }[]
+  agents: { label: string; ok: boolean; durationMs: number }[]
+  waitMs: number
+}
+
+export type WatchHistoryEvent = {
+  kind: 'event'
+  id: string
+  at: number
+  icon: 'compact' | 'model' | 'error' | 'plan'
+  text: string
+}
+
+export type WatchHistoryEntry = WatchHistoryTurn | WatchHistoryEvent
+
 export type WatchSnapshot = {
   sessionId: string
   cwd: string
@@ -106,6 +135,8 @@ export type WatchSnapshot = {
   agents: WatchAgent[]
   health: WatchHealth
   plan: WatchPlan | null
+  // Turns and session events, oldest first.
+  history: WatchHistoryEntry[]
 }
 
 export type WatchPeer = {
@@ -125,6 +156,9 @@ export type WatchPeer = {
 
 export type WatchUi = {
   tab: WatchTab
+  // History rows the person opened, by entry id.
+  expanded: string[]
+  historyFilter: 'all' | 'turns' | 'problems'
   scope: 'this' | 'all'
   mutedUntil: number
   tick: number

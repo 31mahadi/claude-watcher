@@ -6,15 +6,16 @@ import { DEFAULTS, deepMergeRaw, getPath, mergeConfig, parseValue, patchFor } fr
 import { normalizeKey, remember, stepKind } from './estimate'
 import { parseDuration, time, toolLabel, truncate } from './format'
 import { classifyCommand, parseGitStatus, parseTestOutput } from './health'
-import { needsYouText, Pane, summary, TABS, type View } from './render/pane'
+import { needsYouText, Pane, shortModel, summary, TABS, type View } from './render/pane'
 import type { Kit } from './render/widgets'
 import { heartbeatOf } from './sessions'
 import { attribute, isPersistent, isPlanPath, ledgerPath, mergeTodos, parseLedger, parsePlanFile, planFromFile, promptPlan, settle, taskEvent } from './plan'
+import * as H from './history'
 import * as S from './state'
 
 const snap = atom({ plugin: 'watcher', key: 'snap' } as const, S.EMPTY_SNAP)
 const config = atom({ plugin: 'watcher', key: 'config' } as const, DEFAULTS)
-const ui = atom({ plugin: 'watcher', key: 'ui' } as const, { tab: 'turn', scope: 'this', mutedUntil: 0, tick: 0 } as WatchUi)
+const ui = atom({ plugin: 'watcher', key: 'ui' } as const, { tab: 'turn', scope: 'this', mutedUntil: 0, tick: 0, expanded: [], historyFilter: 'all' } as WatchUi)
 const peers = atom({ plugin: 'watcher', key: 'peers' } as const, [] as WatchPeer[])
 const estimates = atom({ plugin: 'watcher', key: 'estimates' } as const, {} as Record<string, number[]>)
 
@@ -110,6 +111,8 @@ const BEAT_REFRESH_MS = 5000
 const HISTORY_KEYS = 300
 // Calls that waited on a permission prompt: their duration is not a run time.
 const waitedCalls = new Set<string>()
+// When each of those calls started waiting, for the history's wait time.
+const waitStarts = new Map<string, number>()
 
 // ── Plan sources ──
 
@@ -139,11 +142,13 @@ async function loadPlanFile($: $, path: string, source: 'file' | 'planmode', for
   planTexts.set(path, key)
   const done = ledger ? parseLedger(ledger, path) : new Set<number>()
   const now = await $.clock.now()
+  const wasPath = current?.path
   await update($, snap, s => {
     const prev = s.plan && s.plan.path === path ? s.plan : undefined
     return { ...s, plan: settle(planFromFile(parsed, { path, source, done, now, prev, branch: s.branch, prompt: s.goal }), now) }
   })
   await savePlan($)
+  if (wasPath !== path) await logEvent($, 'plan', `plan loaded: ${parsed.title || 'plan'} (${parsed.steps.length} steps)`)
 }
 
 async function refreshPlanFile($: $): Promise<void> {
@@ -154,6 +159,23 @@ async function refreshPlanFile($: $): Promise<void> {
 async function savePlan($: $): Promise<void> {
   const s = await read($, snap)
   if (s.sessionId && s.plan && isPersistent(s.plan)) await $.store.set(`plan:${s.sessionId}`, s.plan)
+}
+
+async function saveLog($: $): Promise<void> {
+  const s = await read($, snap)
+  if (s.sessionId) await $.store.set(`log:${s.sessionId}`, s.history)
+}
+
+async function restoreLog($: $, sessionId: string): Promise<void> {
+  const stored = (await $.store.get(`log:${sessionId}`)) as WatchSnapshot['history'] | undefined
+  if (!Array.isArray(stored)) return
+  await update($, snap, s => (s.history.length ? s : { ...s, history: stored }))
+}
+
+async function logEvent($: $, icon: 'compact' | 'model' | 'error' | 'plan', text: string): Promise<void> {
+  const now = await $.clock.now()
+  await update($, snap, s => ({ ...s, history: H.addEvent(s.history ?? [], now, icon, text) }))
+  await saveLog($)
 }
 
 async function restorePlan($: $, sessionId: string): Promise<void> {
@@ -294,7 +316,10 @@ async function setNeedsYou($: $, needsYou: WatchNeedsYou) {
     health: { ...s.health, needsYou },
   }))
   const s = await read($, snap)
-  if (needsYou.kind === 'permission' && s.current) waitedCalls.add(s.current.id)
+  if (needsYou.kind === 'permission' && s.current) {
+    waitedCalls.add(s.current.id)
+    if (!waitStarts.has(s.current.id)) waitStarts.set(s.current.id, needsYou.since)
+  }
   // The band shows at once; the toast and notification wait for attention.delaySeconds (see tickOnce).
   if ((await read($, config)).attention.delaySeconds <= 0) {
     notifiedFor = needsYou.since
@@ -331,6 +356,7 @@ export const register: Register = on => {
       // A hot reload keeps $.state: carry the snapshot on for the same session.
       await update($, snap, () => (prev.sessionId === sessionId ? { ...prev, cwd: e.cwd, model } : { ...S.EMPTY_SNAP, sessionId, cwd: e.cwd, model }))
       await restorePlan($, sessionId)
+      await restoreLog($, sessionId)
       const cfg = await read($, config)
       await update($, ui, u => ({ ...u, tab: prev.sessionId === sessionId ? u.tab : cfg.defaultTab }))
       await $.command.register({
@@ -380,7 +406,7 @@ export const register: Register = on => {
       const now = await $.clock.now()
       const goal = truncate(e.text.split('\n').find(l => l.trim()) ?? '', 80) || undefined
       await update($, snap, s => {
-        const started = S.startTurn(s, now, goal)
+        const started = { ...S.startTurn(s, now, goal), history: H.startTurnEntry(s.history ?? [], e.turnId, now, e.text) }
         return isPersistent(s.plan) ? started : { ...started, plan: promptPlan(e.text, now, s.branch) }
       })
       const cfg = await read($, config)
@@ -402,9 +428,16 @@ export const register: Register = on => {
         const ended = S.endTurn(s, now, failed)
         const pct = ended.health.contextPct
         const contextHistory = pct === undefined ? ended.health.contextHistory : [...ended.health.contextHistory, Math.round(pct)].slice(-20)
-        return { ...ended, plan: ended.plan ? settle(ended.plan, now) : null, health: { ...ended.health, contextHistory } }
+        const plan = ended.plan ? settle(ended.plan, now) : null
+        const since = s.turnStartedAt ?? now
+        let history = ended.history ?? []
+        if (plan) history = H.noteSteps(history, plan.steps.filter(x => (x.startedAt ?? -1) >= since || (x.endedAt ?? -1) >= since || x.status === 'running'))
+        for (const a of ended.agents.filter(x => x.startedAt >= since)) history = H.addAgent(history, a.type, a.phase !== 'failed', (a.endedAt ?? now) - a.startedAt)
+        history = H.endTurnEntry(history, now, failed)
+        return { ...ended, plan, history, health: { ...ended.health, contextHistory } }
       })
       await savePlan($)
+      await saveLog($)
       await saveHistory($)
       await beat($)
       const cfg = await read($, config)
@@ -483,8 +516,19 @@ export const register: Register = on => {
           },
         }
       })
-      // Credit the call, its edit and its test to the step running now.
+      // Credit the call, its edit and its test to the step running now, and to the turn's history.
       const testResult = patch.lastTest
+      const waitedFrom = waitStarts.get(call.id)
+      waitStarts.delete(call.id)
+      const mainLoop = !call.agentId
+      await update($, snap, s => {
+        let history = s.history ?? []
+        if (mainLoop) history = H.addCall(history, done)
+        if (edited) history = H.addFile(history, edited)
+        if (testResult) history = H.setTest(history, testResult)
+        if (waitedFrom !== undefined) history = H.addWait(history, now - waitedFrom)
+        return { ...s, history }
+      })
       await update($, snap, s => {
         if (!s.plan) return s
         let plan = attribute(s.plan, { kind: 'call' })
@@ -602,6 +646,8 @@ export const register: Register = on => {
     await guard('pre compact', $, async () => {
       const now = await $.clock.now()
       await update($, snap, s => ({ ...s, health: { ...s.health, compactions: s.health.compactions + 1, lastCompactAt: now } }))
+      const pct = (await read($, snap)).health.contextPct
+      await logEvent($, 'compact', `compacted context${pct !== undefined ? ` at ${Math.round(pct)}%` : ''}`)
     })
     return next(e)
   })
@@ -611,6 +657,7 @@ export const register: Register = on => {
       const now = await $.clock.now()
       const kind = typeof e.error === 'string' ? e.error : 'error'
       await update($, snap, s => ({ ...s, phase: 'error' as const, health: { ...s.health, lastError: { kind, text: e.error_details, at: now } } }))
+      await logEvent($, 'error', `Claude stopped: ${kind}`)
       await alert($, `Claude stopped: ${kind}`, true)
     })
     return next(e)
@@ -619,6 +666,7 @@ export const register: Register = on => {
   on('classic.PostModelSwitch', async ($, e, next) => {
     await guard('model switch', $, async () => {
       await update($, snap, s => ({ ...s, model: e.to_model }))
+      await logEvent($, 'model', `model → ${shortModel(e.to_model)}`)
     })
     return next(e)
   })
@@ -718,6 +766,13 @@ export const register: Register = on => {
           })()
         },
         scope: scope => void update($, ui, u => ({ ...u, scope })),
+        toggle: id =>
+          void update($, ui, u => {
+            const open = u.expanded ?? []
+            return { ...u, expanded: open.includes(id) ? open.filter(x => x !== id) : [...open, id].slice(-50) }
+          }),
+        cycleFilter: () =>
+          void update($, ui, (u): WatchUi => ({ ...u, historyFilter: u.historyFilter === 'all' ? 'turns' : u.historyFilter === 'turns' ? 'problems' : 'all' })),
         set: (path, value) => void setConfig($, path, value),
         copy: text => {
           void (async () => {

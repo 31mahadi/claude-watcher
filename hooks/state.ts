@@ -15,6 +15,7 @@ export const EMPTY_SNAP: WatchSnapshot = {
   agents: [],
   health: { compactions: 0, editedFiles: [], needsYou: null, contextHistory: [] },
   plan: null,
+  history: [],
 }
 
 // Reducers: pure, (snapshot, …) → snapshot.

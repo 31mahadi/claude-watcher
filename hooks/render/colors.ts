@@ -10,7 +10,8 @@ export type Semantic = 'accent' | 'ok' | 'warn' | 'attention' | 'dim'
 
 // Text colours are theme keys so they follow the person's light/dark theme.
 const THEME_KEY: Record<Semantic, string> = {
-  accent: 'suggestion',
+  // No theme key is a plain blue on every surface; a colour name is.
+  accent: 'blue',
   ok: 'success',
   warn: 'warning',
   attention: 'error',

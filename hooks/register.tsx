@@ -253,7 +253,8 @@ async function alert($: $, text: string, urgent: boolean) {
 }
 
 async function kitFor($: $, e: { surface: string; props: { bodyColumns: number } }, els: Kit['els']): Promise<Kit> {
-  return { els, surface: e.surface, cfg: await read($, config), columns: e.props.bodyColumns }
+  const columns = e.surface === 'terminal' ? e.props.bodyColumns : Math.max(e.props.bodyColumns, 44)
+  return { els, surface: e.surface, cfg: await read($, config), columns }
 }
 
 

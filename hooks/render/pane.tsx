@@ -136,7 +136,9 @@ export function Pane(v: View) {
 // ── Dashboard: sections appear only when they have something to say ──
 
 function Dashboard(v: View) {
-  const compact = v.k.cfg.compact || v.k.columns < COMPACT_BELOW
+  // Only the terminal measures in real cells; Desktop and VS Code report a small
+  // column count for a panel that wraps and truncates text on its own.
+  const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
   const sections = [
     NeedsYouCard(v),
     NowCard(v),

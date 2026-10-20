@@ -27,7 +27,7 @@ export function gantt(lanes: readonly Lane[], from: number, to: number, width = 
     const y = i * row
     const stroke = lane.outline ? ` stroke="${lane.outline}" stroke-width="1.5"` : ''
     return (
-      `<text x="0" y="${y + 11.5}" ${font} fill="#8b949e">${esc(label(lane.label))}</text>` +
+      (labelWidth > 0 ? `<text x="0" y="${y + 11.5}" ${font} fill="#8b949e">${esc(label(lane.label))}</text>` : '') +
       `<rect x="${labelWidth}" y="${y + 7.5}" width="${plot}" height="1" fill="#30363d"/>` +
       `<rect x="${x.toFixed(1)}" y="${y + 6}" width="${w.toFixed(1)}" height="4" rx="2" fill="${lane.color}"${stroke}/>`
     )

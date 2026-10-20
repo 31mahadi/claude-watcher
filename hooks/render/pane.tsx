@@ -327,7 +327,8 @@ function NowBlock(v: View, compact: boolean): unknown[] {
   if (plan && (plan.steps.length > 0 || active)) {
     const p = planProgress(plan)
     const ticket = plan.ticket && !plan.title.includes(plan.ticket) ? `${plan.ticket} · ` : ''
-    const elapsed = `${span((plan.endedAt ?? (active ? now : (s.turnEndedAt ?? now))) - plan.startedAt)} elapsed`
+    const end = plan.endedAt ?? (active ? undefined : (s.turnEndedAt ?? undefined))
+    const elapsed = `${clock(plan.startedAt)} → ${end ? clock(end) : 'now'} · ${span((end ?? now) - plan.startedAt)}`
     const position = p.total ? (p.done === p.total ? `all ${p.total} steps done` : `step ${Math.min(p.total, p.done + 1)} of ${p.total}`) : undefined
     const rows: unknown[] = [
       <Box key="goal" flexDirection="row" justifyContent="space-between" gap={1}>
@@ -378,6 +379,7 @@ function NowBlock(v: View, compact: boolean): unknown[] {
     const chart = Gantt(k, 'timeline', lanes(v), ganttFrom(v), now)
     nowRows.push(chart ?? <Box key="agents" flexDirection="column">{s.agents.slice(-4).map(a => agentRow(v, a))}</Box>)
   }
+  nowRows.push(...LiveTree(v))
   const chips = SignalChips(v)
   if (chips) nowRows.push(chips)
   out.push(Section(k, 'now-rows', 'NOW', nowRows))
@@ -434,12 +436,12 @@ function oneLine(text: string, max = 60): string {
   return truncate((text.split('\n')[0] ?? '').trim(), max)
 }
 
-// A finished turn's branches: steps it moved, its test result, agents, files.
-function turnBranches(k: Kit, t: WatchHistoryTurn): unknown[] {
-  const { Text } = k.els
-  if (!t.ended) return []
-  const items: { glyph: string; color: string; label: string; value: string }[] = []
-  for (const st of t.steps) {
+type Branch = { glyph: string; color: string; label: string; value: string }
+
+// Branches of a turn: steps it moved, its test result, agents, files.
+function branchItems(t: WatchHistoryTurn, steps: readonly { title: string; status: string }[], agents: readonly { label: string; ok: boolean; durationMs: number; running?: boolean }[]): Branch[] {
+  const items: Branch[] = []
+  for (const st of steps) {
     const [glyph, color] =
       st.status === 'done' ? ['✓', STEP_COLOR.doneMark] : st.status === 'failed' ? ['✗', TINT.attention.fg] : st.status === 'running' ? ['▶', STEP_COLOR.run] : ['○', STEP_COLOR.wait]
     items.push({ glyph, color, label: 'step', value: st.title })
@@ -451,21 +453,81 @@ function turnBranches(k: Kit, t: WatchHistoryTurn): unknown[] {
         : { glyph: '✗', color: TINT.attention.fg, label: 'tests', value: `${t.tests.failed} failed · ${oneLine(t.tests.command)}` },
     )
   }
-  for (const a of t.agents) items.push({ glyph: '⚙', color: a.ok ? TINT.ok.fg : TINT.attention.fg, label: 'agent', value: `${a.label} ${time(a.durationMs, 'human')} ${a.ok ? '✓' : '✗'}` })
+  for (const a of agents) items.push({ glyph: a.running ? '▶' : '⚙', color: a.running ? STEP_COLOR.run : a.ok ? TINT.ok.fg : TINT.attention.fg, label: 'agent', value: `${a.label}${a.running ? '' : ` ${time(a.durationMs, 'human')} ${a.ok ? '✓' : '✗'}`}` })
   if (t.files.length) items.push({ glyph: '✎', color: TINT.violet.fg, label: 'files', value: t.files.map(basename).join(', ') })
+  return items
+}
+
+function renderBranches(k: Kit, key: string, items: readonly Branch[], indent = '  ') {
+  const { Text } = k.els
   const shown = items.slice(0, BRANCHES_SHOWN)
   const extra = items.length - shown.length
-  return shown.map((it, i) => {
-    const last = i === shown.length - 1 && extra === 0
-    return (
-      <Text key={`br-${t.id}-${i}`} wrap="truncate-end">
-        <Text dimColor>{`      ${last ? '└─' : '├─'} `}</Text>
-        <Text color={it.color}>{it.glyph}</Text>
-        <Text dimColor>{` ${it.label.padEnd(5)} `}</Text>
-        {fit(k, it.value, inner(k) - 18)}
-      </Text>
-    )
-  }).concat(extra > 0 ? [<Text key={`br-${t.id}-more`} dimColor>{`      └─ … +${extra}`}</Text>] : [])
+  return shown
+    .map((it, i) => {
+      const last = i === shown.length - 1 && extra === 0
+      return (
+        <Text key={`br-${key}-${i}`} wrap="truncate-end">
+          <Text dimColor>{`${indent}${last ? '└─' : '├─'} `}</Text>
+          <Text color={it.color}>{it.glyph}</Text>
+          <Text dimColor>{` ${it.label.padEnd(5)} `}</Text>
+          {fit(k, it.value, inner(k) - 18)}
+        </Text>
+      )
+    })
+    .concat(extra > 0 ? [<Text key={`br-${key}-more`} dimColor>{`${indent}└─ … +${extra}`}</Text>] : [])
+}
+
+// The running turn's work so far, as a tree under NOW.
+function LiveTree(v: View): unknown[] {
+  const { k, s } = v
+  const turns = (s.history ?? []).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
+  const t = turns[turns.length - 1]
+  if (!t || t.ended || !isActive(s)) return []
+  const since = s.turnStartedAt ?? 0
+  const steps = (s.plan?.steps ?? []).filter(x => (x.startedAt ?? -1) >= since || (x.endedAt ?? -1) >= since).filter(x => x.status !== 'running')
+  const agents = s.agents.filter(a => a.startedAt >= since).map(a => ({ label: a.type, ok: a.phase !== 'failed', durationMs: (a.endedAt ?? v.now) - a.startedAt, running: a.phase === 'running' }))
+  return renderBranches(k, `live-${t.id}`, branchItems(t, steps, agents))
+}
+
+// HISTORY block glance: a turn strip, then turns newest first (10, more on request),
+// each with start → end and length; the history filter applies.
+function turnTimes(t: WatchHistoryTurn): string {
+  return `${clock(t.at)} → ${t.ended && !t.interrupted ? clock(t.at + (t.durationMs ?? 0)) : t.ended ? '?' : 'now'}`
+}
+
+// One past turn as a small card: outcome, prompt, start → end · length; its plan bar; badges.
+function TurnCard(v: View, t: WatchHistoryTurn, n: number) {
+  const { k } = v
+  const { Box, Text } = k.els
+  const problem = isProblem(t)
+  const sem: Semantic = !t.ended ? 'accent' : problem ? 'attention' : 'ok'
+  const len = t.interrupted ? 'interrupted' : t.ended ? span(t.durationMs ?? 0) : 'running'
+  const plan = t.snapshot?.plan
+  const facts = [
+    t.tests ? (t.tests.ok ? 'tests ✓' : `tests ✗ ${t.tests.failed}`) : undefined,
+    t.files.length ? `${t.files.length} file${t.files.length === 1 ? '' : 's'}` : undefined,
+    `${t.calls.length + t.moreCalls} calls`,
+    t.agents.length ? `${t.agents.length} agent${t.agents.length === 1 ? '' : 's'}` : undefined,
+  ].filter(Boolean)
+  return (
+    <Box key={`card-${t.id}`} flexDirection="column" borderStyle="round" borderColor={STATE_HEX[sem === 'ok' ? 'dim' : sem]} paddingX={1}>
+      <Box flexDirection="row" justifyContent="space-between" gap={1}>
+        <Box flexDirection="row" gap={1} flexShrink={1}>
+          {Mark(k, !t.ended ? '▶' : problem ? '✗' : '✓', sem)}
+          <Text dimColor>{`Turn ${n}`}</Text>
+          <Text wrap="truncate-end">{t.title || '(no prompt)'}</Text>
+        </Box>
+        <Text dimColor>{`${turnTimes(t)} · ${len}`}</Text>
+      </Box>
+      {plan ? (
+        <Box flexDirection="row" gap={1} alignItems="center">
+          {Segments(k, `card-seg-${t.id}`, plan.steps.map(x => stepSem(x.status as WatchPlanStep['status'])))}
+          <Text dimColor>{`${plan.steps.filter(x => x.status === 'done').length}/${plan.steps.length} · ${plan.title}`}</Text>
+        </Box>
+      ) : null}
+      <Text dimColor>{facts.join(' · ')}</Text>
+    </Box>
+  )
 }
 
 function HistoryGlance(v: View) {
@@ -485,17 +547,7 @@ function HistoryGlance(v: View) {
     'turn-strip',
     ended.map(t => ({ ms: t.durationMs ?? 0, sem: isProblem(t) ? 'attention' : 'ok' })),
   )
-  const rows = shown.flatMap(t => [
-    <Box key={`row-${t.id}`} flexDirection="row" gap={1}>
-      <Text dimColor>{turnTimes(t)}</Text>
-      {Mark(k, !t.ended ? '▶' : isProblem(t) ? '✗' : '✓', !t.ended ? 'accent' : isProblem(t) ? 'attention' : 'ok')}
-      <Box flexGrow={1} flexShrink={1}>
-        <Text wrap="truncate-end">{fit(k, t.title || '(no prompt)', inner(k) - 26)}</Text>
-      </Box>
-      <Text dimColor>{t.interrupted ? 'interrupted' : t.ended ? time(t.durationMs ?? 0, 'human') : 'running'}</Text>
-    </Box>,
-    ...turnBranches(k, t),
-  ])
+  const rows = shown.map(t => TurnCard(v, t, number.get(t.id) ?? 0))
   const more = turns.length > shown.length
   const picker = Select ? (
     <Select
@@ -518,7 +570,9 @@ function HistoryGlance(v: View) {
         <Text dimColor>bar height = turn length · red = problem</Text>
         {picker}
       </Box>
-      {rows}
+      <Box flexDirection="column" gap={k.cfg.theme === 'dense' ? 0 : 1}>
+        {rows}
+      </Box>
       {rows.length === 0 ? <Text dimColor>{filter === 'problems' ? 'No problem turns.' : 'Nothing yet.'}</Text> : null}
       {more && !Select ? <Text dimColor>{`+${turns.length - shown.length} older · /watch history`}</Text> : null}
     </Box>

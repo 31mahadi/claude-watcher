@@ -286,14 +286,22 @@ export function Gantt(k: Kit, key: string, lanes: readonly GanttLane[], from: nu
   if (!k.cfg.visuals.gantt || lanes.length < 2) return null
   const width = inner(k)
   if (hasSvg(k)) {
-    const source = svg.gantt(
-      lanes.map(l => ({ label: l.label, start: l.start, end: l.end, color: css(l.sem, k.cfg), outline: l.failed ? css('attention', k.cfg) : undefined })),
-      from,
-      to,
-      width * 7,
-      96,
+    // One row per lane: the label is pane text (never scaled), the bar a small image.
+    const plot = Math.max(80, (inner(k) - 16) * 6)
+    return (
+      <Box key={key} flexDirection="column">
+        {lanes.map((l, i) => (
+          <Box key={`lane-${i}`} flexDirection="row" gap={1} alignItems="center">
+            <Box width={15} flexShrink={0}>
+              <Text dimColor wrap="truncate-end">
+                {l.label}
+              </Text>
+            </Box>
+            {svgEl(k, svg.gantt([{ label: l.label, start: l.start, end: l.end, color: css(l.sem, k.cfg), outline: l.failed ? css('attention', k.cfg) : undefined }], from, to, plot, 0), l.label)}
+          </Box>
+        ))}
+      </Box>
     )
-    return svgEl(k, source, lanes.map(l => l.label).join(', '))
   }
   if (hasRaster(k)) {
     const labelW = 10

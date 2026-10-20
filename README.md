@@ -41,16 +41,40 @@ claude --plugin-dir ./claude-watcher
 | `/watch reset [history\|config\|all]` | Clear duration history and/or settings |
 | `/watch export` | Copy the last turn as JSON and print it |
 | `/watch mute 30m` / `/watch unmute` | Silence or restore alerts |
+| `/watch checks` / `/watch changes` | Every check run with failure output / the full change ledger |
 | `/watch clear [history\|plan\|all]` | Empty the history, dismiss the plan (✕ on the plan card does the same), or both |
 
 ## Dashboard
 
-Claude Watcher is a live view of a plan being executed: ticket → plan → Claude works through it, running tests → done. At a glance it answers: which step is Claude on, what is it doing inside that step, did the step's tests pass, and does anything need me.
+One pane you can leave open all day. It answers, at a glance: does anything need me, which step of the plan is Claude on, what has it changed, did its checks pass, and how long until context compaction.
 
-- **Attention** (top, only when needed, the only red or amber card): a permission prompt or question, failing tests with the failure output and the step they belong to, a stop error, or a stall (no tool activity for 90 seconds, or a command running past twice its usual time).
-- **Plan**: ticket key and title, elapsed time, and a bar `3 / 5 · ~8m left`. Done steps show ✓ and their time (more than six collapse to one line). The running step is expanded: its live command with "usually ~1:30" or "first run", files edited and calls made in this step, its test result, and its checkbox sub-steps. Pending steps follow, four at most. When the turn ends with the plan unfinished, a receipt line replaces the live command.
-- **Timeline**: one swimlane chart for the main loop and every subagent, with rows for agents that are running or failed.
-- **Health line**: context % with a per-turn trend, git branch and dirty files, last test result, and a link when another session needs you.
+```
+PLAN     CAM-77 · Migrate auth                     3 / 13 · ~8m   12:40
+         ━━━━━━━━░░░░░░░░░░░░░░░░░░░░ 23%
+         ▶ Company facts (data layer)                              2:12
+           running  npm test · 0:41 · usually ~1:30
+           next     Add the fields · 2 of 5 done
+           tests    ✗ 2 failed
+           files    login.ts · 14 calls
+CHANGES  src/login.ts                      +42 −7     turn 3
+         1 files · +42 −7
+CHECKS   npm test                ✗ ✗ ✓         41s ago · 9 passed
+CONTEXT  57% ━━━━━━┃━━░░  ~6 turns to compaction · +4%/turn
+HISTORY  20:32 ✗ Turn 4 · fix failing test · 2:11 · 16 calls · tests ✗
+─────────────────────────────────────────────────────────────────
+view ▾   history ▾   open… ▾
+```
+
+- **Attention** (top, only when needed, the only coloured card): a permission prompt or question, failing tests with the failure output and their step, a stop error, or a stall.
+- **Plan**: ticket and title, progress and time left, done steps, the running step with its live command, next sub-step, test result and files, then the next two steps.
+- **Changes**: every file Claude edited this session with `+N −M`, from `git diff --numstat` against the commit the session started from; your own edits counted separately.
+- **Checks**: each test, lint and build command with its last five outcomes (`✗ ✗ ✓`), kept across `/clear` and resume.
+- **Context**: usage with a gauge and a forecast of turns left before compaction, from the per-turn burn since the last compaction (`health.compactAtPct`, default 85).
+- **Agents**: one swimlane chart for the main loop and every subagent.
+- **History**: one line per turn and session event, newest first.
+- **Idle**: when nothing runs, everything above collapses to one line, `Idle · last turn 2:11 · 16 calls · tests ✓ · 2 files`, plus history.
+- **Footer**: `view` switches between the dashboard and detail views, `history` filters history (all, turns, problems), `open…` opens the plan file, the failing test at its line, or a changed file in VS Code (`code -g`; the path is copied when `code` isn't available), or copies the resume command.
+- **Badge**: the pane's tab reads `Watcher · 1` while something needs you.
 
 ### Where the plan comes from
 

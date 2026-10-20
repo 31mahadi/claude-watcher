@@ -32,7 +32,12 @@ export function startTurnEntry(h: History, id: string, at: number, prompt: strin
   const line = (prompt.split('\n').find(l => l.trim()) ?? '').trim()
   const title = line.length > 80 ? `${line.slice(0, 79)}…` : line
   const turn: WatchHistoryTurn = { kind: 'turn', id, at, title, ended: false, failed: false, calls: [], moreCalls: 0, files: [], steps: [], agents: [], waitMs: 0 }
-  return cap([...h, turn])
+  // A turn that never saw its end (interrupted, or the mod reloaded) is closed now.
+  const closed = h.map(e => {
+    if (e.kind !== 'turn' || e.ended) return e
+    return { ...e, ended: true, interrupted: true, durationMs: undefined }
+  })
+  return cap([...closed, turn])
 }
 
 export function addCall(h: History, call: WatchCall): WatchHistoryEntry[] {

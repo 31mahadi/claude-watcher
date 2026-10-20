@@ -96,6 +96,8 @@ export type WatchHistoryTurn = {
   title: string
   durationMs?: number
   ended: boolean
+  // Ended by the next turn starting, not by a turn-complete event (interrupted, or reloaded mid-turn).
+  interrupted?: boolean
   failed: boolean
   calls: WatchHistoryCall[]
   moreCalls: number

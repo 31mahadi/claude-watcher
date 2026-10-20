@@ -288,7 +288,7 @@ function stepDetail(v: View, step: WatchPlanStep, full: boolean): unknown[] {
   }
   if (step.lastTest) {
     const t = step.lastTest
-    lines.push(t.ok ? <Text dimColor>{`${pad}tests ✓ ${t.passed}`}</Text> : <Text color={resolve('attention', k.cfg)}>{`${pad}tests ✗ ${t.failed} failed`}</Text>)
+    lines.push(t.ok ? <Text dimColor>{`${pad}tests ✓${t.passed ? ` ${t.passed}` : ''}`}</Text> : <Text color={resolve('attention', k.cfg)}>{`${pad}tests ✗ ${t.failed} failed`}</Text>)
     if (full && !t.ok && t.snippet && k.els.Code) {
       const { Code } = k.els
       lines.push(<Code source={t.snippet} />)
@@ -364,7 +364,7 @@ function HealthLine(v: View) {
   }
   if (s.branch) items.push(<Text dimColor>{`${s.branch}${hl.dirtyFiles ? ` · ${hl.dirtyFiles} dirty` : ''}`}</Text>)
   const t = hl.lastTest
-  if (t) items.push(<Text dimColor>{t.ok ? `tests ✓ ${t.passed}` : `tests ✗ ${t.failed}`}</Text>)
+  if (t) items.push(<Text dimColor>{t.ok ? `tests ✓${t.passed ? ` ${t.passed}` : ''}` : `tests ✗ ${t.failed}`}</Text>)
   const waiting = peers.filter(x => x.sessionId !== s.sessionId && x.needsYou && !x.endedAt)
   if (waiting.length) {
     const n = waiting.length
@@ -446,7 +446,7 @@ function clock(at: number): string {
 function turnSummary(t: WatchHistoryTurn, n: number, cfg: WatchConfig): string {
   return [
     `Turn ${n} · ${t.title || '(no prompt)'}`,
-    t.ended ? time(t.durationMs ?? 0, cfg.timeFormat) : 'running',
+    t.interrupted ? 'interrupted' : t.ended ? time(t.durationMs ?? 0, cfg.timeFormat) : 'running',
     `${t.calls.length + t.moreCalls} calls`,
     t.tests ? (t.tests.ok ? 'tests ✓' : 'tests ✗') : undefined,
     t.files.length ? `${t.files.length} file${t.files.length === 1 ? '' : 's'}` : undefined,
@@ -486,7 +486,7 @@ function turnDetail(v: View, t: WatchHistoryTurn, full: boolean): unknown[] {
   if (t.files.length) lines.push(<Text dimColor wrap="truncate-end">{`${pad}edited ${t.files.map(basename).join(', ')}`}</Text>)
   if (t.tests) {
     lines.push(
-      t.tests.ok ? <Text dimColor>{`${pad}tests ✓ ${t.tests.passed}`}</Text> : <Text color={resolve('attention', cfg)}>{`${pad}tests ✗ ${t.tests.failed} failed · ${truncate(t.tests.command, 40)}`}</Text>,
+      t.tests.ok ? <Text dimColor>{`${pad}tests ✓${t.tests.passed ? ` ${t.tests.passed}` : ''}`}</Text> : <Text color={resolve('attention', cfg)}>{`${pad}tests ✗ ${t.tests.failed} failed · ${truncate(t.tests.command, 40)}`}</Text>,
     )
     if (!t.tests.ok && t.tests.snippet && cfg.visuals.failedTestSnippet) lines.push(Code ? <Code source={t.tests.snippet} /> : <Text dimColor>{t.tests.snippet}</Text>)
   }
@@ -525,10 +525,14 @@ function HistorySection(v: View, mode: 'line' | 'dashboard' | 'full') {
     const expanded = mode === 'full' || open.has(e.id)
     const sem: Semantic = isProblem(e) ? 'attention' : e.ended ? 'dim' : 'accent'
     body.push(
-      <Button key={`hist-${e.id}`} plain onPress={() => v.actions.toggle(e.id)}>
-        <Text dimColor>{`${expanded ? '▾' : '▸'} ${clock(e.at)}  `}</Text>
-        <Text color={sem === 'dim' ? undefined : resolve(sem, cfg)}>{turnSummary(e, number.get(e.id) ?? 0, cfg)}</Text>
-      </Button>,
+      // Only the glyph is a control: surfaces draw a Button as a native chip.
+      <Box key={`row-${e.id}`} flexDirection="row" gap={1}>
+        <Button key={`hist-${e.id}`} plain label={expanded ? '▾' : '▸'} onPress={() => v.actions.toggle(e.id)} />
+        <Text wrap="truncate-end">
+          <Text dimColor>{`${clock(e.at)}  `}</Text>
+          <Text color={sem === 'dim' ? undefined : resolve(sem, cfg)}>{turnSummary(e, number.get(e.id) ?? 0, cfg)}</Text>
+        </Text>
+      </Box>,
     )
     if (expanded) body.push(...turnDetail(v, e, mode === 'full'))
   }

@@ -55,6 +55,7 @@ export const DEFAULTS: WatchConfig = {
     parseTestOutput: true,
     gitStatus: true,
     showCost: true,
+    compactAtPct: 85,
   },
   showToolBadge: false,
   redactCommands: false,

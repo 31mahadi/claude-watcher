@@ -13,7 +13,7 @@ export const EMPTY_SNAP: WatchSnapshot = {
   toolCalls: 0,
   recent: [],
   agents: [],
-  health: { compactions: 0, editedFiles: [], needsYou: null, contextHistory: [], changes: [] },
+  health: { compactions: 0, editedFiles: [], needsYou: null, contextHistory: [], changes: [], checks: {} },
   plan: null,
   history: [],
 }
@@ -30,7 +30,7 @@ export function normalizeSnap(raw: unknown): WatchSnapshot {
     agents: Array.isArray(s.agents) ? s.agents : [],
     history: Array.isArray(s.history) ? s.history : [],
     plan: s.plan && Array.isArray(s.plan.steps) ? s.plan : null,
-    health: { ...health, editedFiles: Array.isArray(health.editedFiles) ? health.editedFiles : [], contextHistory: Array.isArray(health.contextHistory) ? health.contextHistory : [], changes: Array.isArray(health.changes) ? health.changes : [] },
+    health: { ...health, editedFiles: Array.isArray(health.editedFiles) ? health.editedFiles : [], contextHistory: Array.isArray(health.contextHistory) ? health.contextHistory : [], changes: Array.isArray(health.changes) ? health.changes : [], checks: health.checks && typeof health.checks === 'object' ? health.checks : {} },
   }
 }
 

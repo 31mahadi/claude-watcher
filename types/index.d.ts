@@ -48,6 +48,9 @@ export type WatchTestResult = {
 
 export type WatchChange = { path: string; added: number; removed: number; binary: boolean; lastTurn?: number; byClaude: boolean }
 
+export type WatchCheckRun = { ok: boolean; at: number; passed?: number; failed?: number; snippet?: string; turn: number }
+export type WatchCheck = { command: string; kind: 'test' | 'lint' | 'build'; runs: WatchCheckRun[] }
+
 export type WatchHealth = {
   contextPct?: number
   contextTokens?: number
@@ -68,6 +71,8 @@ export type WatchHealth = {
   gitBase?: string
   changes: WatchChange[]
   changesAt?: number
+  // Each test/lint/build command's recent runs, by check key.
+  checks: Record<string, WatchCheck>
 }
 
 export type WatchPlanStep = {
@@ -225,6 +230,8 @@ export type WatchConfig = {
     parseTestOutput: boolean
     gitStatus: boolean
     showCost: boolean
+    // Context % at which compaction is expected, for the forecast.
+    compactAtPct: number
   }
   showToolBadge: boolean
   redactCommands: boolean

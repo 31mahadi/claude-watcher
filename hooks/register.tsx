@@ -552,7 +552,8 @@ export const register: Register = on => {
         const plan = ended.plan ? settle(ended.plan, now) : null
         const since = s.turnStartedAt ?? now
         let history = ended.history ?? []
-        if (plan) history = H.noteSteps(history, plan.steps.filter(x => (x.startedAt ?? -1) >= since || (x.endedAt ?? -1) >= since || x.status === 'running'))
+        // Only steps this turn started or finished; a step running across turns branches once.
+        if (plan) history = H.noteSteps(history, plan.steps.filter(x => (x.startedAt ?? -1) >= since || (x.endedAt ?? -1) >= since))
         for (const a of ended.agents.filter(x => x.startedAt >= since)) history = H.addAgent(history, a.type, a.phase !== 'failed', (a.endedAt ?? now) - a.startedAt)
         // Snapshot what the dashboard shows now, for replaying this turn later.
         const testRuns = checkRows(ended.health.checks ?? {}).find(c => c.kind === 'test')

@@ -16,6 +16,15 @@ export type Kit = {
   rows?: number
 }
 
+// An Svg at its markup's own pixel size: surfaces stretch an unsized Svg to the
+// slot, which scales its text too.
+export function svgEl(k: Kit, source: string, alt: string) {
+  const { Svg } = k.els
+  const w = Number(/width="([\d.]+)"/.exec(source)?.[1] ?? 0) || undefined
+  const hh = Number(/height="([\d.]+)"/.exec(source)?.[1] ?? 0) || undefined
+  return <Svg source={source} alt={alt} width={w} height={hh} />
+}
+
 // One bar thickness everywhere: progress, gauge and agent lanes.
 export const BAR_PX = 4
 
@@ -44,7 +53,7 @@ export function Bar(k: Kit, key: string, fraction: number, sem: Semantic, label:
   const width = Math.max(6, inner(k) - label.length - 1)
   let bar
   if (hasSvg(k)) {
-    bar = <Svg source={svg.bar(fraction, css(sem, k.cfg), TRACK_CSS, width * 7, BAR_PX)} alt={textBar(fraction, width, 'ascii')} />
+    bar = svgEl(k, svg.bar(fraction, css(sem, k.cfg), TRACK_CSS, width * 7, BAR_PX), textBar(fraction, width, 'ascii'))
   } else if (hasRaster(k)) {
     const g = raster.bar(fraction, width, hex(sem, k.cfg), TRACK_HEX)
     bar = <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
@@ -146,7 +155,7 @@ export function MiniBar(k: Kit, key: string, fraction: number, sem: Semantic, ma
     const w = cells * 7
     const tick = mark !== undefined ? `<line x1="${Math.round(mark * w)}" y1="0" x2="${Math.round(mark * w)}" y2="${BAR_PX}" stroke="#8b949e" stroke-width="1"/>` : ''
     const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${BAR_PX}" viewBox="0 0 ${w} ${BAR_PX}"><rect width="${w}" height="${BAR_PX}" rx="${BAR_PX / 2}" fill="${TRACK_CSS}"/><rect width="${Math.round(f * w)}" height="${BAR_PX}" rx="${BAR_PX / 2}" fill="${css(sem, k.cfg)}"/>${tick}</svg>`
-    return <Svg source={source} alt={`${Math.round(f * 100)}%`} />
+    return svgEl(k, source, `${Math.round(f * 100)}%`)
   }
   if (hasRaster(k)) {
     const g = raster.bar(f, cells, hex(sem, k.cfg), TRACK_HEX)
@@ -167,7 +176,7 @@ export function Segments(k: Kit, key: string, sems: readonly Semantic[]) {
     const rects = sems.map((s, i) => `<rect x="${(i * (w + gap)).toFixed(1)}" y="0" width="${w.toFixed(1)}" height="${BAR_PX}" rx="1" fill="${fill(s)}"/>`)
     return (
       <Box key={key}>
-        <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" data-kind="segments" width="${total}" height="${BAR_PX}" viewBox="0 0 ${total} ${BAR_PX}">${rects.join('')}</svg>`} alt={sems.map(s => (s === 'ok' ? '▰' : '▱')).join('')} />
+        {svgEl(k, `<svg xmlns="http://www.w3.org/2000/svg" data-kind="segments" width="${total}" height="${BAR_PX}" viewBox="0 0 ${total} ${BAR_PX}">${rects.join('')}</svg>`, sems.map(s => (s === 'ok' ? '▰' : '▱')).join(''))}
       </Box>
     )
   }
@@ -204,7 +213,7 @@ export function TurnStrip(k: Kit, key: string, turns: readonly { ms: number; sem
     const w = turns.length * (BAR_PX + 2)
     return (
       <Box key={key}>
-        <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" data-kind="turns" width="${w}" height="${tall}" viewBox="0 0 ${w} ${tall}">${rects.join('')}</svg>`} alt={`${turns.length} turns`} />
+        {svgEl(k, `<svg xmlns="http://www.w3.org/2000/svg" data-kind="turns" width="${w}" height="${tall}" viewBox="0 0 ${w} ${tall}">${rects.join('')}</svg>`, `${turns.length} turns`)}
       </Box>
     )
   }
@@ -253,7 +262,7 @@ export function Sparkline(k: Kit, key: string, values: readonly number[], opts: 
   const sem = opts.sem ?? 'accent'
   const cells = Math.min(inner(k), opts.cells ?? 40)
   const shown = values.slice(-cells)
-  if (hasSvg(k)) return <Svg source={svg.sparkline(shown, css(sem, k.cfg), Math.max(24, shown.length * 5), 12, opts.max)} alt={opts.alt ?? 'trend'} />
+  if (hasSvg(k)) return svgEl(k, svg.sparkline(shown, css(sem, k.cfg), Math.max(24, shown.length * 5), 12, opts.max), opts.alt ?? 'trend')
   if (hasRaster(k)) {
     const g = raster.sparkline(shown, hex(sem, k.cfg), opts.max)
     return <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
@@ -265,7 +274,7 @@ export function Sparkline(k: Kit, key: string, values: readonly number[], opts: 
 export function Donut(k: Kit, fraction: number, sem: Semantic) {
   const { Text, Svg } = k.els
   if (k.cfg.visuals.contextDonut && hasSvg(k)) {
-    return <Svg source={svg.donut(fraction, css(sem, k.cfg), TRACK_CSS)} alt={`${Math.round(fraction * 100)}%`} />
+    return svgEl(k, svg.donut(fraction, css(sem, k.cfg), TRACK_CSS), `${Math.round(fraction * 100)}%`)
   }
   return <Text color={resolve(sem, k.cfg)}>{textBar(fraction, 10, k.cfg.barStyle)}</Text>
 }
@@ -284,7 +293,7 @@ export function Gantt(k: Kit, key: string, lanes: readonly GanttLane[], from: nu
       width * 7,
       96,
     )
-    return <Svg source={source} alt={lanes.map(l => l.label).join(', ')} />
+    return svgEl(k, source, lanes.map(l => l.label).join(', '))
   }
   if (hasRaster(k)) {
     const labelW = 10

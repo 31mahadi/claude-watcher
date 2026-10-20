@@ -44,11 +44,12 @@ export function changesFromGit(numstat: string, untracked: string, edited: Map<s
 }
 
 // Totals over Claude's rows only; "new" files count as a file, not as lines.
-export function changesTotal(rows: readonly WatchChange[]): { files: number; added: number; removed: number } {
+export function changesTotal(rows: readonly WatchChange[]): { files: number; added: number; removed: number; created: number } {
   const mine = rows.filter(r => r.byClaude)
   return {
     files: mine.length,
     added: mine.reduce((t, r) => t + Math.max(0, r.added), 0),
     removed: mine.reduce((t, r) => t + r.removed, 0),
+    created: mine.filter(r => r.added < 0).length,
   }
 }

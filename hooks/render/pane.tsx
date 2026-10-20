@@ -402,7 +402,9 @@ function SignalChips(v: View) {
   }
   if (hl.gitBase) {
     const t = changesTotal(hl.changes ?? [])
-    chips.push(Badge(k, t.files ? 'violet' : 'slate', 'files changed', t.files ? `+${t.added} −${t.removed}` : 'none'))
+    const lines = t.added || t.removed ? `+${t.added} −${t.removed}` : ''
+    const created = t.created ? `${t.created} new` : ''
+    chips.push(Badge(k, t.files ? 'violet' : 'slate', 'files changed', t.files ? [lines, created].filter(Boolean).join(' · ') : 'none'))
   }
   if (hl.contextPct !== undefined) {
     const tint: Tint = hl.contextPct >= 90 ? 'attention' : hl.contextPct >= cfg.health.contextWarnPct ? 'warn' : 'teal'

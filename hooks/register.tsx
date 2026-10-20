@@ -938,6 +938,7 @@ export const register: Register = on => {
           })(),
         dismissPlan: () => void dismissPlan($),
         pick: value => void openPick($, value, e.surface),
+        toggleHistory: () => void update($, ui, (u): WatchUi => ({ ...u, historyCollapsed: !u.historyCollapsed })),
         turnPick: value =>
           void update($, ui, (u): WatchUi =>
             value === 'more'

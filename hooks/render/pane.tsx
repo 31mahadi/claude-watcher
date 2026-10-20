@@ -29,6 +29,8 @@ export type View = {
     dismissPlan: () => void
     pick: (value: string) => void
     turnPick: (value: string) => void
+    toggleHistory: () => void
+    clearHistory: () => void
     filter: (value: string) => void
   }
 }
@@ -527,7 +529,7 @@ function TurnCard(v: View, t: WatchHistoryTurn, n: number) {
 
 function HistoryGlance(v: View) {
   const { k, s } = v
-  const { Box, Text, Select } = k.els
+  const { Box, Text, Select, Button } = k.els
   const cfg = k.cfg
   const all = (s.history ?? []).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
   if (all.length === 0) return null
@@ -562,10 +564,12 @@ function HistoryGlance(v: View) {
   return (
     <Box key="history" flexDirection="column">
       <Box flexDirection="row" gap={2} alignItems="center" flexWrap="wrap">
+        <Button key="history-toggle" plain label={collapsed ? '▸' : '▾'} onPress={() => v.actions.toggleHistory()} />
         <Text dimColor bold>TURNS</Text>
         {strip}
         <Text dimColor>{collapsed ? `${all.length} turn${all.length === 1 ? '' : 's'} · collapsed` : 'bar height = turn length · red = problem'}</Text>
         {picker}
+        <Button key="history-clear" plain label="clear" onPress={() => v.actions.clearHistory()} />
       </Box>
       {collapsed ? null : (
         <>

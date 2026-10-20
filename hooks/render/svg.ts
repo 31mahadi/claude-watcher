@@ -13,7 +13,6 @@ export function bar(fraction: number, color: string, track = '#30363d', width = 
 
 export type Lane = { label: string; start: number; end: number; color: string; outline?: string }
 
-// Swimlanes over [from, to]. One row per lane.
 // Swimlanes over [from, to]: one row per lane, label left, bar right, a "now" edge.
 export function gantt(lanes: readonly Lane[], from: number, to: number, width = 300, labelWidth = 96): string {
   const row = 16

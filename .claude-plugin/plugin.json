@@ -1,0 +1,6 @@
+{
+  "name": "watcher",
+  "version": "0.9.0",
+  "description": "Live dashboard of what Claude is doing: turn, plan, agents, sessions and health.",
+  "types": "./types/index.d.ts"
+}

@@ -544,6 +544,7 @@ function HistoryGlance(v: View) {
   )
   const rows = shown.map(t => TurnCard(v, t, number.get(t.id) ?? 0))
   const more = turns.length > shown.length
+  const collapsed = v.ui.historyCollapsed === true
   const picker = Select ? (
     <Select
       key="turn-pick"
@@ -551,6 +552,7 @@ function HistoryGlance(v: View) {
       value=""
       options={[
         { value: '', label: 'open turn…' },
+        collapsed ? { value: 'expand', label: 'expand history' } : { value: 'collapse', label: 'collapse history' },
         ...shown.map(t => ({ value: t.id, label: `Turn ${number.get(t.id)} · ${t.title.slice(0, 40)}` })),
         ...(more ? [{ value: 'more', label: `show 10 more (${turns.length - shown.length} older)` }] : []),
       ]}
@@ -562,14 +564,18 @@ function HistoryGlance(v: View) {
       <Box flexDirection="row" gap={2} alignItems="center" flexWrap="wrap">
         <Text dimColor bold>TURNS</Text>
         {strip}
-        <Text dimColor>bar height = turn length · red = problem</Text>
+        <Text dimColor>{collapsed ? `${all.length} turn${all.length === 1 ? '' : 's'} · collapsed` : 'bar height = turn length · red = problem'}</Text>
         {picker}
       </Box>
+      {collapsed ? null : (
+        <>
       <Box flexDirection="column" gap={k.cfg.theme === 'dense' ? 0 : 1}>
         {rows}
       </Box>
       {rows.length === 0 ? <Text dimColor>{filter === 'problems' ? 'No problem turns.' : 'Nothing yet.'}</Text> : null}
       {more && !Select ? <Text dimColor>{`+${turns.length - shown.length} older · /watch history`}</Text> : null}
+        </>
+      )}
     </Box>
   )
 }

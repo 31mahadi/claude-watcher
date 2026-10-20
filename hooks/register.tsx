@@ -940,7 +940,13 @@ export const register: Register = on => {
         pick: value => void openPick($, value, e.surface),
         turnPick: value =>
           void update($, ui, (u): WatchUi =>
-            value === 'more' ? { ...u, historyLimit: (u.historyLimit ?? 10) + 10 } : value ? { ...u, replay: value, tab: 'replay' } : u,
+            value === 'more'
+              ? { ...u, historyLimit: (u.historyLimit ?? 10) + 10 }
+              : value === 'collapse' || value === 'expand'
+                ? { ...u, historyCollapsed: value === 'collapse' }
+                : value
+                  ? { ...u, replay: value, tab: 'replay' }
+                  : u,
           ),
         filter: value => void update($, ui, (u): WatchUi => ({ ...u, historyFilter: value === 'turns' || value === 'problems' ? value : 'all' })),
         cycleFilter: () =>

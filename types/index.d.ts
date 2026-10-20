@@ -186,6 +186,7 @@ export type WatchUi = {
   // Turn shown in the replay view, and how many turns the dashboard lists.
   replay?: string
   historyLimit?: number
+  historyCollapsed?: boolean
   scope: 'this' | 'all'
   mutedUntil: number
   tick: number

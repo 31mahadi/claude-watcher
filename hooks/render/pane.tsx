@@ -267,7 +267,9 @@ function StepList(v: View, plan: WatchPlan): unknown[] {
     const mark = step.status === 'done' ? '✓' : step.status === 'failed' ? '✗' : running ? '▶' : '○'
     const markColor = step.status === 'done' ? STEP_COLOR.doneMark : step.status === 'failed' ? resolve('attention', k.cfg) : running ? STEP_COLOR.run : STEP_COLOR.wait
     const textColor = step.status === 'done' ? STEP_COLOR.done : step.status === 'failed' ? resolve('attention', k.cfg) : running ? STEP_COLOR.run : STEP_COLOR.wait
-    const dur = step.startedAt !== undefined ? span((step.endedAt ?? now) - step.startedAt) : ''
+    // Steps marked done without being watched (ledger on load) have no real duration.
+    const ms = step.startedAt !== undefined ? (step.endedAt ?? now) - step.startedAt : 0
+    const dur = step.startedAt !== undefined && (running || ms >= 1000) ? span(ms) : ''
     rows.push(
       <Box key={`step-${step.id}`} flexDirection="row" justifyContent="space-between" gap={1}>
         <Box flexDirection="row" gap={1} flexShrink={1}>

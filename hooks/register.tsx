@@ -359,6 +359,10 @@ export const register: Register = on => {
       }
       const started = call
       await update($, snap, x => S.startCall(x, started))
+      if (e.tool === 'TodoWrite' && Array.isArray(input.todos)) {
+        const todos = input.todos as S.Todo[]
+        await update($, snap, x => S.syncTodos(x, todos, now))
+      }
       if (e.tool === 'AskUserQuestion') startTicker($)
     })
     const ran = await next(e)

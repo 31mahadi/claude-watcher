@@ -101,6 +101,25 @@ export function addTask(s: WatchSnapshot, id: string, title: string, now: number
   return { ...s, tasks: [...s.tasks, { id, title, status: 'pending', createdAt: now, owner }] }
 }
 
+// A TodoWrite call carries the whole list each time: replace the tasks, keeping
+// timings for titles already known.
+export type Todo = { content?: unknown; activeForm?: unknown; status?: unknown }
+
+export function syncTodos(s: WatchSnapshot, todos: readonly Todo[], now: number): WatchSnapshot {
+  const known = new Map(s.tasks.map(t => [t.title, t]))
+  const tasks = todos
+    .filter(t => typeof t.content === 'string')
+    .map((t, i) => {
+      const title = t.content as string
+      const status = t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'running' : 'pending'
+      const prev = known.get(title)
+      const startedAt = status === 'pending' ? undefined : (prev?.startedAt ?? now)
+      const endedAt = status === 'done' ? (prev?.endedAt ?? now) : undefined
+      return { id: prev?.id ?? `todo-${i}-${title}`, title, status, createdAt: prev?.createdAt ?? now, startedAt, endedAt } as WatchSnapshot['tasks'][number]
+    })
+  return { ...s, tasks }
+}
+
 export function completeTask(s: WatchSnapshot, id: string, title: string, now: number): WatchSnapshot {
   const known = s.tasks.some(t => t.id === id)
   const tasks = known

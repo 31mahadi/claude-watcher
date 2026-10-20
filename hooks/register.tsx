@@ -437,8 +437,8 @@ export const register: Register = on => {
       const started = call
       await update($, snap, x => S.startCall(x, started))
       if (e.tool === 'TodoWrite' && Array.isArray(input.todos)) {
-        const todos = input.todos as S.Todo[]
-        await update($, snap, x => ({ ...S.syncTodos(x, todos, now), plan: mergeTodos(x.plan, todos, now, x.goal) }))
+        const todos = input.todos as { content?: unknown; status?: unknown }[]
+        await update($, snap, x => ({ ...x, plan: mergeTodos(x.plan, todos, now, x.goal) }))
       }
       if (e.tool === 'AskUserQuestion' || e.tool === 'Agent') startTicker($)
     })
@@ -567,7 +567,7 @@ export const register: Register = on => {
   on('classic.TaskCreated', async ($, e, next) => {
     await guard('task created', $, async () => {
       const now = await $.clock.now()
-      await update($, snap, s => ({ ...S.addTask(s, e.task_id, e.task_subject, now, e.teammate_name), plan: taskEvent(s.plan, { id: e.task_id, title: e.task_subject, done: false }, now) }))
+      await update($, snap, s => ({ ...s, plan: taskEvent(s.plan, { id: e.task_id, title: e.task_subject, done: false }, now) }))
     })
     return next(e)
   })
@@ -575,7 +575,7 @@ export const register: Register = on => {
   on('classic.TaskCompleted', async ($, e, next) => {
     await guard('task completed', $, async () => {
       const now = await $.clock.now()
-      await update($, snap, s => ({ ...S.completeTask(s, e.task_id, e.task_subject, now), plan: taskEvent(s.plan, { id: e.task_id, title: e.task_subject, done: true }, now) }))
+      await update($, snap, s => ({ ...s, plan: taskEvent(s.plan, { id: e.task_id, title: e.task_subject, done: true }, now) }))
     })
     return next(e)
   })
@@ -675,7 +675,7 @@ export const register: Register = on => {
     if (verb === 'export') {
       const s = await read($, snap)
       const json = JSON.stringify(
-        { turnStartedAt: s.turnStartedAt, turnEndedAt: s.turnEndedAt, phase: s.phase, toolCalls: s.toolCalls, recent: s.recent, tasks: s.tasks, agents: s.agents, health: s.health, plan: s.plan },
+        { turnStartedAt: s.turnStartedAt, turnEndedAt: s.turnEndedAt, phase: s.phase, toolCalls: s.toolCalls, recent: s.recent, agents: s.agents, health: s.health, plan: s.plan },
         null,
         2,
       )

@@ -1,9 +1,10 @@
-import type { WatchCall, WatchConfig, WatchPeer, WatchSnapshot, WatchTab, WatchUi } from '../../types'
+import type { WatchCall, WatchConfig, WatchPeer, WatchPlan, WatchPlanStep, WatchSnapshot, WatchTab, WatchUi } from '../../types'
 import { CHOICES, getPath } from '../config'
-import { estimateMs, median } from '../estimate'
+import { estimateMs } from '../estimate'
+import { planProgress } from '../plan'
 import { ago, basename, pct, seconds, time, truncate } from '../format'
 import { resolve, type Semantic } from './colors'
-import { Bar, Card, Donut, Gantt, inner, Mark, Pill, Pulse, Row, type GanttLane, type Kit } from './widgets'
+import { Bar, Card, Donut, Gantt, inner, Mark, Pulse, Row, Sparkline, type GanttLane, type Kit } from './widgets'
 
 export type View = {
   k: Kit
@@ -68,14 +69,6 @@ export function etaText(eta: ReturnType<typeof currentEta>, cfg: WatchConfig): s
   return `${eta.confidence}${time(eta.remainingMs, cfg.timeFormat)} left`
 }
 
-export function planEta(s: WatchSnapshot): { done: number; total: number; remainingMs?: number } {
-  const total = s.tasks.length
-  const done = s.tasks.filter(t => t.status === 'done').length
-  const durations = s.tasks.filter(t => t.status === 'done' && t.endedAt && t.startedAt).map(t => t.endedAt! - t.startedAt!)
-  if (durations.length === 0 || done === total) return { done, total }
-  return { done, total, remainingMs: (total - done) * median(durations) }
-}
-
 // One-line summary for the spinner suffix and the sessions board.
 // `short` drops the command and elapsed time, which Claude Code's own spinner already shows.
 export function summary(v: Pick<View, 's' | 'history' | 'now'> & { cfg: WatchConfig; short?: boolean }): string {
@@ -84,8 +77,8 @@ export function summary(v: Pick<View, 's' | 'history' | 'now'> & { cfg: WatchCon
   if (s.current && !v.short) parts.push(s.current.label, time(now - s.current.startedAt, cfg.timeFormat))
   const eta = etaText(currentEta(s, v.history, cfg, now), cfg)
   if (eta) parts.push(eta)
-  const p = planEta(s)
-  if (p.total > 0) parts.push(`${p.done}/${p.total} tasks`)
+  const p = s.plan ? planProgress(s.plan) : undefined
+  if (p && p.total > 0) parts.push(`${p.done}/${p.total} tasks`)
   if (s.health.needsYou) parts.push('needs you')
   return truncate(parts.join(' · '), cfg.spinnerMaxChars)
 }
@@ -137,23 +130,38 @@ export function Pane(v: View) {
   )
 }
 
-// ── Dashboard: what needs me, how far along, is it stuck ──
+// ── Dashboard: does anything need me, which step is it on, is it stuck ──
 
 const STALL_MS = 90_000
+const DONE_SHOWN = 6
+const PENDING_SHOWN = 4
 
 function Dashboard(v: View) {
   const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
-  const active = isActive(v.s)
-  return [
-    AttentionCard(v),
-    v.s.turnStartedAt === null ? WaitingCard(v) : active ? GoalCard(v) : ReceiptCard(v),
-    compact ? null : TimelineCard(v),
-    active ? StatusRow(v) : null,
-    compact ? null : OtherSessions(v),
-  ].filter(Boolean)
+  return [AttentionCard(v), PlanCard(v, compact), compact ? null : TimelineCard(v), HealthLine(v)].filter(Boolean)
 }
 
-// The only red/amber on the dashboard: things that need the person.
+// Usual duration of the running call and how far past it we are.
+function callTiming(v: View): { elapsed: number; usual?: number } | undefined {
+  const { s, now, history, k } = v
+  if (!s.current) return undefined
+  const elapsed = now - s.current.startedAt
+  const eta = currentEta(s, history, k.cfg, now)
+  const usual = eta && eta.confidence !== 'max' ? Math.max(eta.remainingMs + elapsed, 1000) : undefined
+  return { elapsed, usual }
+}
+
+function stallText(v: View): string | undefined {
+  const { s, now, k } = v
+  if (!isActive(s)) return undefined
+  const t = callTiming(v)
+  if (t?.usual && t.elapsed > 2 * t.usual && t.elapsed > 10_000) return `⏳ ${truncate(s.current!.label, 40)} running ${(t.elapsed / t.usual).toFixed(1)}× its usual time`
+  const quiet = s.lastEventAt ? now - s.lastEventAt : 0
+  if (!s.current && quiet > STALL_MS) return `⏳ no activity for ${time(quiet, k.cfg.timeFormat)}`
+  return undefined
+}
+
+// The only red/amber card: needs-you, failing tests, stop errors, stalls.
 function AttentionCard(v: View) {
   const { s, k, now } = v
   const { Text, Code } = k.els
@@ -163,7 +171,8 @@ function AttentionCard(v: View) {
   }
   const t = s.health.lastTest
   if (t && !t.ok && (s.turnStartedAt === null || t.at >= s.turnStartedAt)) {
-    const body: unknown[] = [<Text dimColor>{truncate(t.command, inner(k))}</Text>]
+    const step = s.plan?.steps.find(x => x.lastTest === t || (x.lastTest && x.lastTest.at === t.at))
+    const body: unknown[] = [<Text dimColor>{truncate(`${step ? `${step.title} · ` : ''}${t.command}`, inner(k))}</Text>]
     if (t.snippet && k.cfg.visuals.failedTestSnippet) body.push(Code ? <Code source={t.snippet} /> : <Text>{t.snippet}</Text>)
     return Card(k, 'attention', <Text bold>{`✗ ${t.failed} test${t.failed === 1 ? '' : 's'} failing`}</Text>, ago(now - t.at), body, 'attention')
   }
@@ -171,94 +180,195 @@ function AttentionCard(v: View) {
   if (err && s.turnStartedAt !== null && err.at >= s.turnStartedAt) {
     return Card(k, 'attention', <Text bold>{`✗ Claude stopped: ${err.kind}`}</Text>, ago(now - err.at), err.text ? [<Text dimColor>{truncate(err.text, inner(k) * 2)}</Text>] : [], 'attention')
   }
+  const stall = stallText(v)
+  if (stall) return Card(k, 'attention', <Text bold>{stall}</Text>, undefined, [], 'warn')
   return null
 }
 
-function WaitingCard(v: View) {
-  const { Text } = v.k.els
-  return Card(v.k, 'goal', 'Watcher', undefined, [<Text dimColor>Waiting for a prompt.</Text>])
+function planSem(v: View, plan: WatchPlan): Semantic {
+  if (v.s.health.needsYou) return 'warn'
+  if (plan.steps.some(x => x.status === 'failed')) return 'attention'
+  if (plan.endedAt) return 'ok'
+  return isActive(v.s) ? 'accent' : 'dim'
 }
 
-function GoalCard(v: View) {
-  const { s, now, k } = v
+function planHeader(v: View, plan: WatchPlan) {
+  const { k } = v
   const { Box, Text } = k.els
-  const cfg = k.cfg
-  const sem = phaseSem(s.phase)
-  const p = planEta(s)
-  const running = s.tasks.find(t => t.status === 'running')
-  const goal = running?.title ?? s.goal ?? PHASE_LABEL[s.phase]
-  const title = (
+  const active = isActive(v.s)
+  const sem = planSem(v, plan)
+  const ticket = plan.ticket && !plan.title.includes(plan.ticket) ? plan.ticket : undefined
+  return (
     <Box flexDirection="row" gap={1}>
-      {Pulse(k, sem)}
-      <Text bold wrap="truncate-end">
-        {truncate(goal, inner(k) - 10)}
+      {active && !plan.endedAt ? Pulse(k, 'accent') : Mark(k, plan.endedAt ? '✓' : '○', plan.endedAt ? 'ok' : sem === 'attention' ? 'attention' : 'dim')}
+      <Text wrap="truncate-end">
+        {ticket ? <Text color={resolve('accent', k.cfg)}>{`${ticket} · `}</Text> : null}
+        <Text bold>{plan.title || 'Working'}</Text>
       </Text>
     </Box>
   )
-  const right = time(turnElapsed(s, now), cfg.timeFormat)
-  const body: unknown[] = []
-
-  // Progress is the plan's, when there is one.
-  if (p.total > 0) {
-    const step = Math.min(p.total, p.done + 1)
-    const label = p.done === p.total ? 'all steps done' : `step ${step} of ${p.total}${p.remainingMs ? ` · ~${time(p.remainingMs, cfg.timeFormat)} left` : ''}`
-    body.push(Bar(k, 'goal-bar', p.done / p.total, p.done === p.total ? 'ok' : 'accent', label))
-  }
-
-  if (s.current) {
-    const elapsed = now - s.current.startedAt
-    const eta = currentEta(s, v.history, cfg, now)
-    const typical = eta && eta.confidence !== 'max' ? eta.totalMs : undefined
-    const usual = eta && eta.confidence !== 'max' ? `usually ~${time(Math.max(eta.remainingMs + elapsed, 1000), cfg.timeFormat)}` : 'first run'
-    body.push(
-      Row(
-        k,
-        <Text wrap="truncate-end">
-          {Mark(k, '▶', 'accent')} {truncate(s.current.label, inner(k) - 22)}
-          <Text dimColor>{`  ${usual}`}</Text>
-        </Text>,
-        time(elapsed, cfg.timeFormat),
-      ),
-    )
-    if (typical && elapsed > 2 * typical && elapsed > 10_000) {
-      body.push(<Text color={resolve('warn', cfg)}>{`⏳ running long: ${(elapsed / typical).toFixed(1)}× its usual time`}</Text>)
-    }
-  } else {
-    const quiet = s.lastEventAt ? now - s.lastEventAt : 0
-    if (quiet > STALL_MS) body.push(<Text color={resolve('warn', cfg)}>{`⏳ no activity for ${time(quiet, cfg.timeFormat)}`}</Text>)
-    else body.push(<Text dimColor>{s.toolCalls ? `thinking · ${s.toolCalls} tool calls so far` : 'thinking'}</Text>)
-  }
-  return Card(k, 'goal', title, right, body, sem)
 }
 
-// A finished turn: one receipt, then nothing moves.
-function ReceiptCard(v: View) {
-  const { s, now, k } = v
+// What the turn is doing right now, or its receipt once it ended.
+function liveLine(v: View, indent: string) {
+  const { s, k } = v
   const { Text } = k.els
   const cfg = k.cfg
-  const failed = s.phase === 'error'
-  const p = planEta(s)
-  const t = s.health.lastTest
-  const turnTests = t && s.turnStartedAt !== null && t.at >= s.turnStartedAt ? t : undefined
-  const facts = [
-    `${s.toolCalls} calls`,
-    p.total ? `${p.done}/${p.total} steps` : undefined,
-    turnTests ? (turnTests.ok ? 'tests ✓' : `${turnTests.failed} tests ✗`) : undefined,
-    s.health.editedFiles.length ? `${s.health.editedFiles.length} file${s.health.editedFiles.length === 1 ? '' : 's'} edited` : undefined,
-  ].filter(Boolean)
-  const meta = [
-    s.model ? shortModel(s.model) : undefined,
-    s.health.contextPct !== undefined ? `ctx ${pct(s.health.contextPct)}` : undefined,
-    cfg.health.showCost && s.health.costUsd !== undefined ? `$${s.health.costUsd.toFixed(2)}` : undefined,
-    s.turnEndedAt ? `finished ${ago(now - s.turnEndedAt)}` : undefined,
-  ].filter(Boolean)
-  const title = (
-    <Text bold>
-      {Mark(k, failed ? '✗' : '✓', failed ? 'attention' : 'ok')} {failed ? 'Stopped' : 'Done'}
-      <Text dimColor>{s.goal ? ` · ${truncate(s.goal, inner(k) - 20)}` : ''}</Text>
-    </Text>
+  if (!isActive(s)) {
+    const turnStart = s.turnStartedAt ?? 0
+    const steps = s.plan?.steps.filter(x => (x.status === 'done' || x.status === 'failed') && (x.endedAt ?? 0) >= turnStart).length ?? 0
+    const t = s.health.lastTest && s.health.lastTest.at >= turnStart ? s.health.lastTest : undefined
+    const facts = [`turn done · ${s.toolCalls} calls`, steps ? `${steps} steps` : undefined, t ? (t.ok ? 'tests ✓' : 'tests ✗') : undefined, s.health.editedFiles.length ? `${s.health.editedFiles.length} files` : undefined]
+    return <Text dimColor>{`${indent}${facts.filter(Boolean).join(' · ')}`}</Text>
+  }
+  const timing = callTiming(v)
+  if (s.current && timing) {
+    const usual = timing.usual ? `usually ~${time(timing.usual, cfg.timeFormat)}` : 'first run'
+    return Row(
+      k,
+      <Text wrap="truncate-end">
+        {indent}
+        {Mark(k, '▶', 'accent')} {truncate(s.current.label, inner(k) - indent.length - 22)}
+        <Text dimColor>{`  ${usual}`}</Text>
+      </Text>,
+      time(timing.elapsed, cfg.timeFormat),
+    )
+  }
+  return <Text dimColor>{`${indent}thinking${s.toolCalls ? ` · ${s.toolCalls} tool calls` : ''}`}</Text>
+}
+
+function stepGlyph(step: WatchPlanStep): [string, Semantic] {
+  switch (step.status) {
+    case 'done':
+      return ['✓', 'ok']
+    case 'failed':
+      return ['✗', 'attention']
+    case 'running':
+      return ['▶', 'accent']
+    default:
+      return ['○', 'dim']
+  }
+}
+
+function stepRow(v: View, step: WatchPlanStep) {
+  const { k, now } = v
+  const { Text } = k.els
+  const [glyph, sem] = stepGlyph(step)
+  const dur = step.startedAt !== undefined ? time((step.endedAt ?? now) - step.startedAt, k.cfg.timeFormat) : ''
+  return Row(
+    k,
+    <Text wrap="truncate-end">
+      {Mark(k, glyph, sem)} {step.status === 'pending' ? <Text dimColor>{step.title}</Text> : step.title}
+    </Text>,
+    dur,
   )
-  return Card(k, 'goal', title, time(turnElapsed(s, now), cfg.timeFormat), [<Text>{facts.join(' · ')}</Text>, <Text dimColor>{meta.join(' · ')}</Text>])
+}
+
+// The running step's detail: live call, files and calls, tests, substeps.
+function stepDetail(v: View, step: WatchPlanStep, full: boolean): unknown[] {
+  const { k } = v
+  const { Text } = k.els
+  const pad = '    '
+  const lines: unknown[] = []
+  if (step.status === 'running') lines.push(liveLine(v, pad))
+  if (step.editedFiles.length || step.calls) {
+    const files = step.editedFiles.length ? `edited ${step.editedFiles.map(basename).join(', ')} · ` : ''
+    lines.push(<Text dimColor wrap="truncate-end">{`${pad}${files}${step.calls} calls`}</Text>)
+  }
+  if (step.lastTest) {
+    const t = step.lastTest
+    lines.push(t.ok ? <Text dimColor>{`${pad}tests ✓ ${t.passed}`}</Text> : <Text color={resolve('attention', k.cfg)}>{`${pad}tests ✗ ${t.failed} failed`}</Text>)
+    if (full && !t.ok && t.snippet && k.els.Code) {
+      const { Code } = k.els
+      lines.push(<Code source={t.snippet} />)
+    }
+  }
+  if (step.substeps?.length) {
+    const subs = step.substeps.map(x => `${x.done ? '[x]' : '[ ]'} ${x.title}`)
+    if (full) for (const x of subs) lines.push(<Text dimColor>{`${pad}${x}`}</Text>)
+    else lines.push(<Text dimColor wrap="truncate-end">{`${pad}${truncate(subs.join('  '), inner(k) * 2)}`}</Text>)
+  }
+  return lines
+}
+
+function PlanCard(v: View, compact: boolean) {
+  const { s, k, now } = v
+  const { Text } = k.els
+  const cfg = k.cfg
+  const plan = s.plan
+  if (!plan) return Card(k, 'plan', 'Watcher', undefined, [<Text dimColor>Waiting for a prompt.</Text>])
+  const end = plan.endedAt ?? (isActive(s) ? now : (s.turnEndedAt ?? now))
+  const right = time(end - plan.startedAt, cfg.timeFormat)
+  if (compact) return Card(k, 'plan', planHeader(v, plan), right, [], planSem(v, plan))
+
+  const body: unknown[] = []
+  const p = planProgress(plan)
+  if (p.total === 0) {
+    body.push(liveLine(v, ''))
+    return Card(k, 'plan', planHeader(v, plan), right, body, planSem(v, plan))
+  }
+  const label = p.done === p.total ? 'all steps done' : `${p.done} / ${p.total}${p.remainingMs ? ` · ~${time(p.remainingMs, cfg.timeFormat)} left` : ''}`
+  body.push(Bar(k, 'plan-bar', p.done / p.total, p.done === p.total ? 'ok' : 'accent', label))
+
+  // Finished steps: failed always shown; beyond DONE_SHOWN done, collapse all but the last two.
+  const finished = plan.steps.filter(x => x.status === 'done' || x.status === 'failed')
+  const doneOnly = finished.filter(x => x.status === 'done')
+  const collapsed = doneOnly.length > DONE_SHOWN ? new Set(doneOnly.slice(0, -2).map(x => x.id)) : new Set<string>()
+  let collapsedShown = false
+  for (const step of plan.steps) {
+    if (step.status === 'pending') continue
+    if (collapsed.has(step.id)) {
+      if (!collapsedShown) {
+        const sum = doneOnly.slice(0, -2).reduce((t, x) => t + ((x.endedAt ?? 0) - (x.startedAt ?? x.endedAt ?? 0)), 0)
+        body.push(Row(k, <Text>{Mark(k, '✓', 'ok')}{` ${collapsed.size} steps done`}</Text>, time(sum, cfg.timeFormat)))
+        collapsedShown = true
+      }
+      continue
+    }
+    body.push(stepRow(v, step))
+    if (step.status === 'running') body.push(...stepDetail(v, step, false))
+  }
+  if (!p.current) body.push(liveLine(v, ''))
+  const pending = plan.steps.filter(x => x.status === 'pending')
+  for (const step of pending.slice(0, PENDING_SHOWN)) body.push(stepRow(v, step))
+  if (pending.length > PENDING_SHOWN) body.push(<Text dimColor>{`+${pending.length - PENDING_SHOWN} more · /watch plan`}</Text>)
+  return Card(k, 'plan', planHeader(v, plan), right, body, planSem(v, plan))
+}
+
+// One plain line: context with its trend, git, tests, other sessions waiting.
+function HealthLine(v: View) {
+  const { s, k, peers } = v
+  const { Box, Text, Button } = k.els
+  const hl = s.health
+  const items: unknown[] = []
+  if (hl.contextPct !== undefined) {
+    const sem: Semantic | undefined = hl.contextPct >= 90 ? 'attention' : hl.contextPct >= k.cfg.health.contextWarnPct ? 'warn' : undefined
+    const trend = [...hl.contextHistory, Math.round(hl.contextPct)]
+    items.push(
+      <Box key="ctx" flexDirection="row" gap={1} alignItems="center">
+        {sem ? <Text color={resolve(sem, k.cfg)}>{`ctx ${pct(hl.contextPct)}`}</Text> : <Text dimColor>{`ctx ${pct(hl.contextPct)}`}</Text>}
+        {Sparkline(k, 'ctx-trend', trend, { sem: sem ?? 'dim', cells: 20, max: 100, alt: 'context per turn' })}
+      </Box>,
+    )
+  }
+  if (s.branch) items.push(<Text dimColor>{`${s.branch}${hl.dirtyFiles ? ` · ${hl.dirtyFiles} dirty` : ''}`}</Text>)
+  const t = hl.lastTest
+  if (t) items.push(<Text dimColor>{t.ok ? `tests ✓ ${t.passed}` : `tests ✗ ${t.failed}`}</Text>)
+  const waiting = peers.filter(x => x.sessionId !== s.sessionId && x.needsYou && !x.endedAt)
+  if (waiting.length) {
+    const n = waiting.length
+    items.push(
+      <Button key="other-sessions" plain onPress={() => v.actions.tab('sessions')}>
+        <Text color={resolve('warn', k.cfg)}>{`⏸ ${n} other session${n > 1 ? 's need' : ' needs'} you`}</Text>
+      </Button>,
+    )
+  }
+  if (items.length === 0) return null
+  return (
+    <Box key="health" flexDirection="row" columnGap={2} flexWrap="wrap">
+      {items}
+    </Box>
+  )
 }
 
 function agentSem(a: WatchSnapshot['agents'][number]): Semantic {
@@ -305,64 +415,13 @@ function TimelineCard(v: View) {
   return Card(k, 'timeline', 'Timeline', right, [chart ?? s.agents.slice(-4).map(a => agentRow(v, a)), ...(chart ? rows : [])])
 }
 
-function StatusRow(v: View) {
-  const { s, k } = v
-  const { Box } = k.els
-  const hl = s.health
-  const ctxSem: Semantic | undefined =
-    hl.contextPct === undefined ? undefined : hl.contextPct >= 90 ? 'attention' : hl.contextPct >= k.cfg.health.contextWarnPct ? 'warn' : undefined
-  const t = hl.lastTest
-  const items = [
-    hl.contextPct !== undefined ? Pill(k, `ctx ${pct(hl.contextPct)}`, ctxSem) : null,
-    s.branch ? Pill(k, `${s.branch}${hl.dirtyFiles ? ` · ${hl.dirtyFiles} dirty` : ''}`, undefined) : null,
-    t ? Pill(k, t.ok ? 'tests ✓' : `${t.failed} failed`, t.ok ? undefined : 'attention') : null,
-    hl.lastLint && !hl.lastLint.ok ? Pill(k, 'lint ✗', 'attention') : null,
-    hl.lastBuild && !hl.lastBuild.ok ? Pill(k, 'build ✗', 'attention') : null,
-  ].filter(Boolean)
-  if (items.length === 0) return null
-  return (
-    <Box key="status" flexDirection="row" columnGap={2} flexWrap="wrap">
-      {items}
-    </Box>
-  )
-}
-
 // "claude-opus-5-5" → "opus 5.5"; other ids pass through.
 export function shortModel(id: string): string {
   const m = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(id)
   return m ? `${m[1]} ${m[2]}.${m[3]}` : id.replace(/^claude-/, '')
 }
 
-function OtherSessions(v: View) {
-  const { k, s, peers } = v
-  const waiting = peers.filter(p => p.sessionId !== s.sessionId && p.needsYou && !p.endedAt)
-  if (waiting.length === 0) return null
-  const { Button, Text } = k.els
-  const n = waiting.length
-  return (
-    <Button key="other-sessions" plain onPress={() => v.actions.tab('sessions')}>
-      <Text color={resolve('warn', k.cfg)}>⏸</Text>
-      {` ${n} other session${n > 1 ? 's need' : ' needs'} you: ${waiting.map(p => p.project).join(', ')}`}
-    </Button>
-  )
-}
-
 // ── Detail views (/watch <tab>) ──
-
-function taskRow(v: View, t: WatchSnapshot['tasks'][number]) {
-  const { k, now } = v
-  const { Text } = k.els
-  const glyph = t.status === 'done' ? '✓' : t.status === 'running' ? '▶' : '○'
-  const sem: Semantic = t.status === 'done' ? 'ok' : t.status === 'running' ? 'accent' : 'dim'
-  const dur = t.startedAt ? time((t.endedAt ?? now) - t.startedAt, k.cfg.timeFormat) : ''
-  return Row(
-    k,
-    <Text wrap="truncate-end">
-      {Mark(k, glyph, sem)} {t.status === 'pending' ? <Text dimColor>{t.title}</Text> : t.title}
-    </Text>,
-    dur,
-  )
-}
 
 function callRow(v: View, c: WatchCall) {
   const { k, now } = v
@@ -391,15 +450,19 @@ function CallsDetail(v: View) {
 function PlanDetail(v: View) {
   const { s, k, now } = v
   const { Text } = k.els
-  if (s.tasks.length === 0) return Card(k, 'plan', 'Plan', undefined, [<Text dimColor>No task list this turn.</Text>])
-  const p = planEta(s)
-  const right = [`${p.done}/${p.total}`, time(turnElapsed(s, now), k.cfg.timeFormat), p.remainingMs ? `~${time(p.remainingMs, k.cfg.timeFormat)} left` : undefined]
+  const plan = s.plan
+  if (!plan || plan.steps.length === 0) return Card(k, 'plan', 'Plan', undefined, [<Text dimColor>No plan steps yet. Read a plan file, or let Claude make a todo list.</Text>])
+  const p = planProgress(plan)
+  const right = [`${p.done} / ${p.total}`, time((plan.endedAt ?? now) - plan.startedAt, k.cfg.timeFormat), p.remainingMs ? `~${time(p.remainingMs, k.cfg.timeFormat)} left` : undefined]
     .filter(Boolean)
     .join(' · ')
-  return Card(k, 'plan', 'Plan', right, [
-    Bar(k, 'plan-bar', p.done / Math.max(1, p.total), 'accent', `${Math.round((p.done / Math.max(1, p.total)) * 100)}%`),
-    ...s.tasks.map(t => taskRow(v, t)),
-  ])
+  const body: unknown[] = [Bar(k, 'plan-bar', p.done / Math.max(1, p.total), 'accent', `${Math.round((p.done / Math.max(1, p.total)) * 100)}%`)]
+  if (plan.path) body.push(<Text dimColor wrap="truncate-end">{plan.path}</Text>)
+  for (const step of plan.steps) {
+    body.push(stepRow(v, step))
+    if (step.status !== 'pending') body.push(...stepDetail(v, step, true))
+  }
+  return Card(k, 'plan', planHeader(v, plan), right, body, planSem(v, plan))
 }
 
 function AgentsDetail(v: View) {

@@ -119,17 +119,20 @@ export function Pulse(k: Kit, sem: Semantic) {
   return <Text color={resolve(sem, k.cfg)}>●</Text>
 }
 
-export function Sparkline(k: Kit, key: string, values: readonly number[]) {
+// A small trend line. `cells` bounds its width; `max` fixes the scale (100 for a percentage).
+export function Sparkline(k: Kit, key: string, values: readonly number[], opts: { sem?: Semantic; cells?: number; max?: number; alt?: string } = {}) {
   const { Text, Svg, Raster } = k.els
-  if (!k.cfg.visuals.sparkline || values.length < 3) return null
-  const width = Math.min(inner(k), 40)
-  if (hasSvg(k)) return <Svg source={svg.sparkline(values, css('accent', k.cfg), width * 7, 18)} alt="call durations" />
+  if (!k.cfg.visuals.sparkline || values.length < 2) return null
+  const sem = opts.sem ?? 'accent'
+  const cells = Math.min(inner(k), opts.cells ?? 40)
+  const shown = values.slice(-cells)
+  if (hasSvg(k)) return <Svg source={svg.sparkline(shown, css(sem, k.cfg), Math.max(24, shown.length * 5), 12, opts.max)} alt={opts.alt ?? 'trend'} />
   if (hasRaster(k)) {
-    const g = raster.sparkline(values.slice(-width), hex('accent', k.cfg))
+    const g = raster.sparkline(shown, hex(sem, k.cfg), opts.max)
     return <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
   }
-  const max = Math.max(...values, 1)
-  return <Text dimColor>{values.slice(-width).map(v => '▁▂▃▄▅▆▇█'[Math.min(7, Math.floor((v / max) * 7.999))]).join('')}</Text>
+  const max = opts.max ?? Math.max(...shown, 1)
+  return <Text dimColor>{shown.map(v => '▁▂▃▄▅▆▇█'[Math.min(7, Math.floor((v / max) * 7.999))]).join('')}</Text>
 }
 
 export function Donut(k: Kit, fraction: number, sem: Semantic) {

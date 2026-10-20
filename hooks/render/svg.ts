@@ -36,9 +36,9 @@ export function gantt(lanes: readonly Lane[], from: number, to: number, width = 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join('')}${nowLine}</svg>`
 }
 
-export function sparkline(values: readonly number[], color: string, width = 160, height = 24): string {
+export function sparkline(values: readonly number[], color: string, width = 160, height = 24, fixedMax?: number): string {
   if (values.length < 2) return bar(0, color, '#30363d', width, 4)
-  const max = Math.max(...values, 1)
+  const max = fixedMax ?? Math.max(...values, 1)
   const step = width / (values.length - 1)
   const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(height - 2 - (v / max) * (height - 4)).toFixed(1)}`)
   return (

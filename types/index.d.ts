@@ -24,16 +24,6 @@ export type WatchCall = {
   agentId?: string
 }
 
-export type WatchTask = {
-  id: string
-  title: string
-  status: 'pending' | 'running' | 'done'
-  createdAt: number
-  startedAt?: number
-  endedAt?: number
-  owner?: string
-}
-
 export type WatchAgent = {
   id: string
   type: string
@@ -113,7 +103,6 @@ export type WatchSnapshot = {
   current: WatchCall | null
   toolCalls: number
   recent: WatchCall[]
-  tasks: WatchTask[]
   agents: WatchAgent[]
   health: WatchHealth
   plan: WatchPlan | null

@@ -51,8 +51,8 @@ export function heatStrip(colors: readonly number[]): Grid {
 
 const SPARK = '▁▂▃▄▅▆▇█'
 
-export function sparkline(values: readonly number[], fg: number): Grid {
-  const max = Math.max(...values, 1)
+export function sparkline(values: readonly number[], fg: number, fixedMax?: number): Grid {
+  const max = fixedMax ?? Math.max(...values, 1)
   const cells = values.map(v => ({ ch: SPARK[Math.min(7, Math.floor((v / max) * 7.999))]!, fg }))
   return { columns: Math.max(1, cells.length), rows: 1, cells: cellsOf(cells.length ? cells : [{ ch: ' ', fg }]) }
 }

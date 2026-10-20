@@ -154,7 +154,7 @@ export function Gantt(k: Kit, key: string, lanes: readonly GanttLane[], from: nu
       width * 7,
       90,
     )
-    return <Svg source={source} alt={lanes.map(l => l.label).join(', ')} width={width} height={lanes.length + 1} />
+    return <Svg source={source} alt={lanes.map(l => l.label).join(', ')} />
   }
   if (hasRaster(k)) {
     const labelW = 10

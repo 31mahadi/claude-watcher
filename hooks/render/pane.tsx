@@ -9,7 +9,7 @@ import { estimateMs } from '../estimate'
 import { isPersistent, planProgress } from '../plan'
 import { ago, basename, pct, seconds, time, truncate } from '../format'
 import { resolve, type Semantic } from './colors'
-import { Bar, Card, Donut, Gantt, inner, Mark, MiniBar, Pulse, Row, Section, type GanttLane, type Kit } from './widgets'
+import { Bar, Card, Donut, Gantt, inner, Mark, MiniBar, Pulse, Row, Section, Segments, TurnStrip, type GanttLane, type Kit } from './widgets'
 
 export type View = {
   k: Kit
@@ -115,15 +115,14 @@ export function Pane(v: View) {
     // Two blocks: what is happening now on top, history pinned to the bottom with the
     // controls as its last row. The spacer between them takes the pane's spare height.
     const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
-    const history = compact ? null : HistorySection(v, 'dashboard')
     return (
       <Box flexDirection="column" height={v.k.rows}>
         <Box key="now" flexDirection="column" gap={gap} borderStyle="round" borderColor={resolve('dim', v.k.cfg)} paddingX={1}>
-          {Dashboard(v)}
+          {NowBlock(v, compact)}
         </Box>
         <Box key="spacer" flexGrow={1} />
         <Box key="history-block" flexDirection="column" gap={gap} borderStyle="round" borderColor={resolve('dim', v.k.cfg)} paddingX={1}>
-          {history}
+          {compact ? null : HistoryGlance(v)}
           {Footer(v)}
         </Box>
       </Box>
@@ -216,6 +215,155 @@ function Footer(v: View) {
           />
         ) : null}
       </Box>
+    </Box>
+  )
+}
+
+// ── Visual dashboard: picture first, one line of text per idea ──
+
+function stepSem(st: WatchPlanStep['status']): Semantic {
+  return st === 'done' ? 'ok' : st === 'failed' ? 'attention' : st === 'running' ? 'accent' : 'dim'
+}
+
+// The NOW block: attention, goal + segmented progress, one "now" line, agents, signal chips.
+function NowBlock(v: View, compact: boolean): unknown[] {
+  const { k, s, now } = v
+  const { Box, Text } = k.els
+  const cfg = k.cfg
+  const out: unknown[] = []
+  const attention = AttentionCard(v)
+  if (attention) out.push(attention)
+  const plan = s.plan
+  const active = isActive(s)
+  const turns = (s.history ?? []).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
+  const lastTurn = turns[turns.length - 1]
+
+  // Goal row: title left, steps and elapsed right.
+  const p = plan ? planProgress(plan) : undefined
+  const title = plan?.title || (lastTurn?.title ?? 'Watcher')
+  const ticket = plan?.ticket && !title.includes(plan.ticket) ? `${plan.ticket} · ` : ''
+  const elapsed = plan ? time((plan.endedAt ?? (active ? now : (s.turnEndedAt ?? now))) - plan.startedAt, cfg.timeFormat) : ''
+  out.push(
+    <Box key="goal" flexDirection="row" justifyContent="space-between" gap={1}>
+      <Box flexDirection="row" gap={1} flexShrink={1}>
+        {active ? Pulse(k, 'accent') : Mark(k, plan?.endedAt ? '✓' : '○', plan?.endedAt ? 'ok' : 'dim')}
+        <Text bold wrap="truncate-end">
+          {`${ticket}${title}`}
+        </Text>
+      </Box>
+      <Text dimColor>{[p && p.total ? `${p.done}/${p.total}` : undefined, elapsed].filter(Boolean).join(' · ')}</Text>
+    </Box>,
+  )
+  if (plan && p && p.total) {
+    out.push(
+      <Box key="progress" flexDirection="row" justifyContent="space-between" gap={1} alignItems="center">
+        {Segments(k, 'plan-segments', plan.steps.map(x => stepSem(x.status)))}
+        <Text dimColor>{p.done === p.total ? 'done' : p.remainingMs ? `~${time(p.remainingMs, 'human')} left` : ''}</Text>
+      </Box>,
+    )
+  }
+  if (compact) {
+    out.push(SignalChips(v))
+    return out.filter(Boolean)
+  }
+
+  // The single "now" line.
+  if (active) {
+    const step = p?.current
+    const call = s.current ? `${s.current.label} ${time(now - s.current.startedAt, cfg.timeFormat)}` : 'thinking'
+    out.push(
+      <Text key="now-line" wrap="truncate-end">
+        {Mark(k, '▶', 'accent')}
+        {` ${step ? `${step.title} · ` : ''}`}
+        <Text dimColor>{call}</Text>
+      </Text>,
+    )
+  } else {
+    out.push(IdleLine(v))
+  }
+
+  if (s.agents.length) {
+    const chart = Gantt(k, 'timeline', lanes(v), ganttFrom(v), now)
+    out.push(chart ?? <Box key="agents" flexDirection="column">{s.agents.slice(-4).map(a => agentRow(v, a))}</Box>)
+  }
+  out.push(SignalChips(v))
+  return out.filter(Boolean)
+}
+
+// tests ✗✗✓   changes +63 −8   ctx ◔ 57% ~6t
+function SignalChips(v: View) {
+  const { k, s } = v
+  const { Box, Text } = k.els
+  const cfg = k.cfg
+  const hl = s.health
+  const chips: unknown[] = []
+  const checks = checkRows(hl.checks ?? {})
+  const test = checks.find(c => c.kind === 'test') ?? checks[0]
+  if (test) {
+    chips.push(
+      <Text key="chip-tests">
+        <Text dimColor>tests </Text>
+        {test.runs.slice(-5).map(r => (
+          <Text color={resolve(r.ok ? 'ok' : 'attention', cfg)}>{r.ok ? '✓' : '✗'}</Text>
+        ))}
+      </Text>,
+    )
+  }
+  if (hl.gitBase) {
+    const t = changesTotal(hl.changes ?? [])
+    chips.push(
+      <Text key="chip-changes" dimColor={t.files === 0}>
+        {t.files ? `changes +${t.added} −${t.removed}` : 'no changes'}
+      </Text>,
+    )
+  }
+  if (hl.contextPct !== undefined) {
+    const sem: Semantic | undefined = hl.contextPct >= 90 ? 'attention' : hl.contextPct >= cfg.health.contextWarnPct ? 'warn' : undefined
+    const ring = '○◔◑◕●'[Math.min(4, Math.round((hl.contextPct / 100) * 4))]
+    const f = forecast(hl.contextHistory ?? [], lastCompactIndex(s.history ?? []), hl.contextPct, cfg.health.compactAtPct ?? 85)
+    const tail = f.kind === 'turns' ? ` ~${f.turns}t` : f.kind === 'next' ? ' next turn' : ''
+    chips.push(
+      <Text key="chip-ctx" color={sem ? resolve(sem, cfg) : undefined}>
+        {`ctx ${ring} ${pct(hl.contextPct)}${tail}`}
+      </Text>,
+    )
+  }
+  if (chips.length === 0) return null
+  return (
+    <Box key="signals" flexDirection="row" columnGap={3} flexWrap="wrap">
+      {chips}
+    </Box>
+  )
+}
+
+// HISTORY block glance: a turn strip and the last three turns.
+function HistoryGlance(v: View) {
+  const { k, s } = v
+  const { Box, Text } = k.els
+  const cfg = k.cfg
+  const turns = (s.history ?? []).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
+  if (turns.length === 0) return null
+  const ended = turns.filter(t => t.ended).slice(-30)
+  const strip = TurnStrip(
+    k,
+    'turn-strip',
+    ended.map(t => ({ ms: t.durationMs ?? 0, sem: isProblem(t) ? 'attention' : 'ok' })),
+  )
+  const rows = turns.slice(-3).reverse().map(t => (
+    <Box key={`row-${t.id}`} flexDirection="row" gap={1}>
+      <Text dimColor>{clock(t.at)}</Text>
+      {Mark(k, !t.ended ? '▶' : isProblem(t) ? '✗' : '✓', !t.ended ? 'accent' : isProblem(t) ? 'attention' : 'ok')}
+      <Text wrap="truncate-end">{fit(k, t.title || '(no prompt)', inner(k) - 18)}</Text>
+      <Text dimColor>{t.interrupted ? 'interrupted' : t.ended ? time(t.durationMs ?? 0, cfg.timeFormat) : ''}</Text>
+    </Box>
+  ))
+  return (
+    <Box key="history" flexDirection="column">
+      <Box flexDirection="row" gap={2} alignItems="center">
+        <Text dimColor bold>HISTORY</Text>
+        {strip}
+      </Box>
+      {rows}
     </Box>
   )
 }
@@ -798,11 +946,8 @@ function PlanDetail(v: View) {
 function AgentsDetail(v: View) {
   const { s, k, now } = v
   const { Text } = k.els
-  if (s.agents.length === 0) return Card(k, 'agents', 'Agents', undefined, [<Text dimColor>No subagents this session.</Text>])
-  return Card(k, 'agents', 'Agents', `${s.agents.filter(a => a.phase === 'running').length} running`, [
-    ...s.agents.map(a => agentRow(v, a)),
-    Gantt(k, 'agents-gantt', lanes(v), ganttFrom(v), now),
-  ])
+  if (s.agents.length === 0) return Section(k, 'agents', 'AGENTS', [<Text dimColor>No subagents this session.</Text>])
+  return Section(k, 'agents', 'AGENTS', [Gantt(k, 'agents-gantt', lanes(v), ganttFrom(v), now), ...s.agents.map(a => agentRow(v, a))])
 }
 
 export function visiblePeers(peers: readonly WatchPeer[], cfg: WatchConfig, now: number): WatchPeer[] {

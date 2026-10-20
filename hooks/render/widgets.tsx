@@ -155,6 +155,70 @@ export function MiniBar(k: Kit, key: string, fraction: number, sem: Semantic, ma
   return <Text color={resolve(sem, k.cfg)}>{textBar(f, cells, k.cfg.barStyle)}</Text>
 }
 
+// One block per step, coloured by status; 4px like every bar.
+export function Segments(k: Kit, key: string, sems: readonly Semantic[]) {
+  const { Box, Text, Svg, Raster } = k.els
+  const n = Math.max(1, sems.length)
+  if (hasSvg(k)) {
+    const total = Math.max(120, Math.min(inner(k) * 7, 420))
+    const gap = n > 40 ? 1 : 2
+    const w = (total - gap * (n - 1)) / n
+    const rects = sems.map((s, i) => `<rect x="${(i * (w + gap)).toFixed(1)}" y="0" width="${w.toFixed(1)}" height="${BAR_PX}" rx="1" fill="${css(s, k.cfg)}"/>`)
+    return (
+      <Box key={key}>
+        <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" data-kind="segments" width="${total}" height="${BAR_PX}" viewBox="0 0 ${total} ${BAR_PX}">${rects.join('')}</svg>`} alt={sems.map(s => (s === 'ok' ? '▰' : '▱')).join('')} />
+      </Box>
+    )
+  }
+  if (hasRaster(k)) {
+    const cells = raster.cellsOf(sems.map(s => ({ ch: '▬', fg: hex(s, k.cfg) })))
+    return (
+      <Box key={key}>
+        <Raster key={`${key}-r`} columns={n} rows={1} cells={cells} />
+      </Box>
+    )
+  }
+  return (
+    <Box key={key}>
+      <Text>
+        {sems.map(s => (
+          <Text color={resolve(s, k.cfg)}>{s === 'dim' ? '▱' : '▰'}</Text>
+        ))}
+      </Text>
+    </Box>
+  )
+}
+
+// One bar per turn: height = duration, colour = outcome.
+export function TurnStrip(k: Kit, key: string, turns: readonly { ms: number; sem: Semantic }[]) {
+  const { Box, Text, Svg } = k.els
+  if (turns.length === 0) return null
+  const max = Math.max(...turns.map(t => t.ms), 1)
+  if (hasSvg(k)) {
+    const tall = 14
+    const rects = turns.map((t, i) => {
+      const bh = Math.max(2, Math.round((t.ms / max) * tall))
+      return `<rect x="${i * (BAR_PX + 2)}" y="${tall - bh}" width="${BAR_PX}" height="${bh}" rx="1" fill="${css(t.sem, k.cfg)}"/>`
+    })
+    const w = turns.length * (BAR_PX + 2)
+    return (
+      <Box key={key}>
+        <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" data-kind="turns" width="${w}" height="${tall}" viewBox="0 0 ${w} ${tall}">${rects.join('')}</svg>`} alt={`${turns.length} turns`} />
+      </Box>
+    )
+  }
+  const SPARK = '▁▂▃▄▅▆▇█'
+  return (
+    <Box key={key}>
+      <Text>
+        {turns.map(t => (
+          <Text color={resolve(t.sem, k.cfg)}>{SPARK[Math.min(7, Math.floor((t.ms / max) * 7.999))]}</Text>
+        ))}
+      </Text>
+    </Box>
+  )
+}
+
 export function Mark(k: Kit, glyph: string, sem: Semantic) {
   const { Text } = k.els
   return <Text color={resolve(sem, k.cfg)}>{glyph}</Text>

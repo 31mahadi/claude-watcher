@@ -23,6 +23,8 @@ export type View = {
     cycleFilter: () => void
     clearHistory: () => void
     dismissPlan: () => void
+    pick: (value: string) => void
+    filter: (value: string) => void
   }
 }
 

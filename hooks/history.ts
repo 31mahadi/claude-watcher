@@ -86,3 +86,17 @@ export function filterHistory(h: History, filter: 'all' | 'turns' | 'problems'):
   if (filter === 'problems') return h.filter(isProblem)
   return [...h]
 }
+
+// How many turns had ended before the last compaction: the forecast's start in contextHistory.
+export function lastCompactIndex(h: History): number {
+  let at = -1
+  for (let i = h.length - 1; i >= 0; i--) {
+    const e = h[i]!
+    if (e.kind === 'event' && e.icon === 'compact') {
+      at = i
+      break
+    }
+  }
+  if (at < 0) return 0
+  return h.slice(0, at).filter(e => e.kind === 'turn' && e.ended).length
+}

@@ -10,7 +10,10 @@ import { needsYouText, Pane, shortModel, summary, TABS, type View } from './rend
 import type { Kit } from './render/widgets'
 import { heartbeatOf } from './sessions'
 import { attribute, isPersistent, isPlanPath, ledgerPath, mergeTodos, parseLedger, parsePlanFile, planFromFile, promptPlan, settle, taskEvent } from './plan'
+import { changesFromGit } from './changes'
+import { checkKey, recordCheck } from './checks'
 import * as H from './history'
+import { failingLocation, openOptions } from './openmenu'
 import * as S from './state'
 
 const snap = atom({ plugin: 'watcher', key: 'snap' } as const, S.EMPTY_SNAP)
@@ -161,6 +164,86 @@ async function savePlan($: $): Promise<void> {
   if (s.sessionId && s.plan && isPersistent(s.plan)) await $.store.set(`plan:${s.sessionId}`, s.plan)
 }
 
+// ── Changes, checks, badge, open menu ──
+
+let editsSinceRefresh = false
+let lastBadge = -1
+
+async function setGitBase($: $): Promise<void> {
+  const cwd = (await read($, snap)).cwd || (await $.session.cwd())
+  const run = await $.process.run(['git', 'rev-parse', 'HEAD'], { cwd, timeoutMs: 2000 }).catch(() => undefined)
+  const base = run && run.exitCode === 0 ? run.stdout.trim() : undefined
+  await update($, snap, s => ({ ...s, health: { ...s.health, gitBase: base || undefined, changes: base ? s.health.changes : [] } }))
+}
+
+// Diff against the session's starting commit; a run over 2s is dropped and retried later.
+async function refreshChanges($: $): Promise<void> {
+  const s = await read($, snap)
+  const base = s.health.gitBase
+  if (!base) return
+  const cwd = s.cwd || (await $.session.cwd())
+  const numstat = await $.process.run(['git', 'diff', '--numstat', base], { cwd, timeoutMs: 2000 }).catch(() => undefined)
+  const others = await $.process.run(['git', 'ls-files', '--others', '--exclude-standard'], { cwd, timeoutMs: 2000 }).catch(() => undefined)
+  if (!numstat || numstat.exitCode !== 0) return
+  const edited = new Map<string, number>()
+  let turn = 0
+  for (const e of s.history ?? []) {
+    if (e.kind !== 'turn') continue
+    turn += 1
+    for (const f of e.files) edited.set(f, turn)
+  }
+  const changes = changesFromGit(numstat.stdout, others && others.exitCode === 0 ? others.stdout : '', edited, cwd)
+  const now = await $.clock.now()
+  await update($, snap, x => ({ ...x, health: { ...x.health, changes, changesAt: now } }))
+  editsSinceRefresh = false
+}
+
+async function saveChecks($: $): Promise<void> {
+  const s = await read($, snap)
+  if (s.sessionId) await $.store.set(`checks:${s.sessionId}`, s.health.checks)
+}
+
+async function restoreChecks($: $, sessionId: string): Promise<void> {
+  const stored = (await $.store.get(`checks:${sessionId}`)) as WatchSnapshot['health']['checks'] | undefined
+  if (!stored || typeof stored !== 'object') return
+  await update($, snap, s => (Object.keys(s.health.checks ?? {}).length ? s : { ...s, health: { ...s.health, checks: stored } }))
+}
+
+// Things the attention card would show: needs-you, a failing test or a stop error this turn.
+function attentionCount(s: WatchSnapshot): number {
+  const since = s.turnStartedAt ?? Number.POSITIVE_INFINITY
+  if (s.health.needsYou) return 1
+  if (s.health.lastTest && !s.health.lastTest.ok && s.health.lastTest.at >= since) return 1
+  if (s.health.lastError && s.health.lastError.at >= since) return 1
+  return 0
+}
+
+// Pane tab title "Watcher · N" while something needs the person; only for an open pane, only on change.
+async function updateBadge($: $): Promise<void> {
+  const count = attentionCount(await read($, snap))
+  if (count === lastBadge) return
+  if (!(await isPaneOpen($))) return
+  lastBadge = count
+  await $.ui.open({ id: S.PANE, title: count ? `${TITLE} · ${count}` : TITLE })
+}
+
+async function openPick($: $, value: string, surface: string): Promise<void> {
+  const s = await read($, snap)
+  const cwd = s.cwd || (await $.session.cwd())
+  const failing = failingLocation(s.health.lastTest && !s.health.lastTest.ok ? s.health.lastTest.snippet : undefined, cwd)
+  const option = openOptions({ planPath: s.plan?.path, failing, changes: s.health.changes, sessionId: s.sessionId }).find(o => o.value === value)
+  if (!option) return
+  const copy = async (text: string, what: string) => {
+    const res = await $.ui.copy({ text, surface: surface as never }).catch(() => ({ isCopied: false }))
+    $.ui.toast(res.isCopied ? `Copied ${what}: ${text}` : text)
+  }
+  if (option.action.kind === 'copy') return copy(option.action.text, 'command')
+  const path = option.action.path.startsWith('/') ? option.action.path : `${cwd.replace(/\/+$/, '')}/${option.action.path}`
+  const target = option.action.line ? `${path}:${option.action.line}` : path
+  const run = await $.process.run(['code', '-g', target], { cwd, timeoutMs: 3000 }).catch(() => undefined)
+  if (!run || run.exitCode !== 0) await copy(path, 'path')
+}
+
 async function saveLog($: $): Promise<void> {
   const s = await read($, snap)
   if (s.sessionId) await $.store.set(`log:${s.sessionId}`, s.history)
@@ -229,6 +312,8 @@ async function tickOnce($: $) {
     })
   }
   if (active && isPersistent(s.plan) && u.tick % 5 === 0) await refreshPlanFile($)
+  if (active && editsSinceRefresh && u.tick % 5 === 0) await refreshChanges($)
+  await updateBadge($)
   const agentsRunning = seen.some(a => a.status === 'running' || a.status === 'pending' || a.status === 'waiting')
   const waiting = s.health.needsYou
   if (waiting && notifiedFor !== waiting.since && now - waiting.since >= cfg.attention.delaySeconds * 1000) {
@@ -365,6 +450,8 @@ export const register: Register = on => {
       await update($, snap, () => (prev.sessionId === sessionId ? { ...S.normalizeSnap(prev), cwd: e.cwd, model } : { ...S.EMPTY_SNAP, sessionId, cwd: e.cwd, model }))
       await restorePlan($, sessionId)
       await restoreLog($, sessionId)
+      await restoreChecks($, sessionId)
+      await setGitBase($).catch(() => undefined)
       const cfg = await read($, config)
       await update($, ui, u => ({ ...u, expanded: u.expanded ?? [], historyFilter: u.historyFilter ?? 'all', tab: prev.sessionId === sessionId ? u.tab : cfg.defaultTab }))
       await $.command.register({
@@ -401,6 +488,7 @@ export const register: Register = on => {
       if (source === 'clear' || source === 'resume' || source === 'compact') {
         const sessionId = await $.session.id()
         await update($, snap, s => ({ ...S.resetTurn(s), sessionId }))
+        if (source === 'clear') await setGitBase($).catch(() => undefined)
         await loadHistory($)
         await startBeat($)
       }
@@ -446,6 +534,8 @@ export const register: Register = on => {
       })
       await savePlan($)
       await saveLog($)
+      await refreshChanges($).catch(() => undefined)
+      await updateBadge($)
       await saveHistory($)
       await beat($)
       const cfg = await read($, config)
@@ -509,6 +599,15 @@ export const register: Register = on => {
         } else if (kind === 'build') {
           patch.lastBuild = { ok, at: now, command: input.command }
         }
+        const key = kind ? checkKey(input.command, (await read($, snap)).cwd) : ''
+        if (key) {
+          const command = input.command
+          const t = patch.lastTest
+          const turns = ((await read($, snap)).history ?? []).filter(x => x.kind === 'turn').length
+          const runOk = t ? t.ok : ok
+          await update($, snap, x => ({ ...x, health: { ...x.health, checks: recordCheck(x.health.checks ?? {}, key, command, { ok: runOk, at: now, passed: t?.passed, failed: t?.failed, snippet: t?.snippet, turn: turns }) } }))
+          await saveChecks($)
+        }
       }
       const filePath = typeof input.file_path === 'string' ? input.file_path : undefined
       const edited = ok && filePath && /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(e.tool) ? filePath : undefined
@@ -544,6 +643,8 @@ export const register: Register = on => {
         if (testResult) plan = attribute(plan, { kind: 'test', result: testResult })
         return { ...s, plan: settle(plan, now) }
       })
+      if (edited) editsSinceRefresh = true
+      await updateBadge($)
       if (ok && filePath && /^(Read|Edit|Write|MultiEdit)$/.test(e.tool)) {
         const looksLikePlan = isPlanPath(filePath) || (e.tool === 'Read' && /Implementation Plan\s*$/m.test(output.split('\n').slice(0, 3).join('\n')))
         // Editing a plan makes it the plan. Reading one only does when no unfinished file plan is active,
@@ -580,6 +681,7 @@ export const register: Register = on => {
               ? 'idle'
               : undefined
       if (kind) await setNeedsYou($, { kind, since: now, text: e.message })
+      await updateBadge($)
       if (e.effort?.level) await update($, snap, s => ({ ...s, effort: e.effort?.level }))
     })
     return next(e)
@@ -588,6 +690,7 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     await guard('prompt submit', $, async () => {
       await update($, snap, s => (s.health.needsYou ? { ...s, health: { ...s.health, needsYou: null } } : s))
+      await updateBadge($)
     })
     return next(e)
   })
@@ -794,6 +897,8 @@ export const register: Register = on => {
             await saveLog($)
           })(),
         dismissPlan: () => void dismissPlan($),
+        pick: value => void openPick($, value, e.surface),
+        filter: value => void update($, ui, (u): WatchUi => ({ ...u, historyFilter: value === 'turns' || value === 'problems' ? value : 'all' })),
         cycleFilter: () =>
           void update($, ui, (u): WatchUi => ({ ...u, historyFilter: u.historyFilter === 'all' ? 'turns' : u.historyFilter === 'turns' ? 'problems' : 'all' })),
         set: (path, value) => void setConfig($, path, value),

@@ -489,11 +489,6 @@ function LiveTree(v: View): unknown[] {
   return renderBranches(k, `live-${t.id}`, branchItems(t, steps, agents))
 }
 
-// HISTORY block glance: a turn strip, then turns newest first (10, more on request),
-// each with start → end and length; the history filter applies.
-function turnTimes(t: WatchHistoryTurn): string {
-  return `${clock(t.at)} → ${t.ended && !t.interrupted ? clock(t.at + (t.durationMs ?? 0)) : t.ended ? '?' : 'now'}`
-}
 
 // One past turn as a small card: outcome, prompt, start → end · length; its plan bar; badges.
 function TurnCard(v: View, t: WatchHistoryTurn, n: number) {

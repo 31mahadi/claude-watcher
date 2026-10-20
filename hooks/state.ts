@@ -1,4 +1,5 @@
 import type { WatchCall, WatchSnapshot } from '../types'
+import { isPersistent } from './plan'
 
 export const PANE = 'watcher'
 
@@ -31,6 +32,8 @@ export function resetTurn(s: WatchSnapshot): WatchSnapshot {
     tasks: [],
     agents: [],
     health: { ...s.health, editedFiles: [], needsYou: null, lastError: undefined },
+    // A plan from a file outlives /clear; a todo or prompt plan does not.
+    plan: isPersistent(s.plan) ? s.plan : null,
   }
 }
 

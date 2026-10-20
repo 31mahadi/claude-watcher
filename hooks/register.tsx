@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { WatchCall, WatchNeedsYou, WatchPeer, WatchSnapshot, WatchTab, WatchUi } from '../types'
+import type { WatchCall, WatchNeedsYou, WatchPeer, WatchPlan, WatchSnapshot, WatchTab, WatchUi } from '../types'
 import { DEFAULTS, deepMergeRaw, getPath, mergeConfig, parseValue, patchFor } from './config'
 import { normalizeKey, remember, stepKind } from './estimate'
 import { parseDuration, time, toolLabel, truncate } from './format'
@@ -9,6 +9,7 @@ import { classifyCommand, parseGitStatus, parseTestOutput } from './health'
 import { needsYouText, Pane, summary, TABS, type View } from './render/pane'
 import type { Kit } from './render/widgets'
 import { heartbeatOf } from './sessions'
+import { attribute, isPersistent, isPlanPath, ledgerPath, mergeTodos, parseLedger, parsePlanFile, planFromFile, promptPlan, settle, taskEvent } from './plan'
 import * as S from './state'
 
 const snap = atom({ plugin: 'watcher', key: 'snap' } as const, S.EMPTY_SNAP)
@@ -110,6 +111,56 @@ const HISTORY_KEYS = 300
 // Calls that waited on a permission prompt: their duration is not a run time.
 const waitedCalls = new Set<string>()
 
+// ── Plan sources ──
+
+// Plan file and ledger text last parsed, by plan path, so unchanged files are skipped.
+const planTexts = new Map<string, string>()
+// The plan mode file named by the latest plan_mode attachment.
+let planModePath: string | undefined
+
+async function readOr($: $, path: string): Promise<string> {
+  try {
+    return await $.fs.read(path)
+  } catch {
+    return ''
+  }
+}
+
+// Parse a plan file (and its ledger) into the snapshot's plan. `force` re-parses unchanged text.
+async function loadPlanFile($: $, path: string, source: 'file' | 'planmode', force: boolean): Promise<void> {
+  const text = await readOr($, path)
+  if (!text) return
+  const ledger = source === 'file' ? await readOr($, ledgerPath(path)) : ''
+  const key = `${text}\u0000${ledger}`
+  if (!force && planTexts.get(path) === key) return
+  const parsed = parsePlanFile(text)
+  if (!parsed) return
+  planTexts.set(path, key)
+  const done = ledger ? parseLedger(ledger, path) : new Set<number>()
+  const now = await $.clock.now()
+  await update($, snap, s => {
+    const prev = s.plan && s.plan.path === path ? s.plan : undefined
+    return { ...s, plan: settle(planFromFile(parsed, { path, source, done, now, prev, branch: s.branch, prompt: s.goal }), now) }
+  })
+  await savePlan($)
+}
+
+async function refreshPlanFile($: $): Promise<void> {
+  const s = await read($, snap)
+  if (s.plan && isPersistent(s.plan) && s.plan.path) await loadPlanFile($, s.plan.path, s.plan.source as 'file' | 'planmode', false)
+}
+
+async function savePlan($: $): Promise<void> {
+  const s = await read($, snap)
+  if (s.sessionId && s.plan && isPersistent(s.plan)) await $.store.set(`plan:${s.sessionId}`, s.plan)
+}
+
+async function restorePlan($: $, sessionId: string): Promise<void> {
+  const stored = (await $.store.get(`plan:${sessionId}`)) as WatchPlan | undefined
+  if (!stored || !Array.isArray(stored.steps)) return
+  await update($, snap, s => (s.plan ? s : { ...s, plan: stored }))
+}
+
 async function guard(what: string, $: $, fn: () => Promise<unknown>) {
   try {
     await fn()
@@ -137,7 +188,16 @@ async function tickOnce($: $) {
   const now = await $.clock.now()
   const listed = await $.agent.list().catch(() => [])
   const seen = listed.map(a => ({ id: a.id, label: a.description || a.name || a.type, status: a.status }))
-  if (seen.length) await update($, snap, x => S.syncAgents(x, seen, now))
+  if (seen.length) {
+    await update($, snap, x => {
+      const before = new Set(x.agents.map(a => a.id))
+      const y = S.syncAgents(x, seen, now)
+      let plan = y.plan
+      for (const a of y.agents) if (!before.has(a.id) && plan) plan = attribute(plan, { kind: 'agent', id: a.id })
+      return plan === y.plan ? y : { ...y, plan }
+    })
+  }
+  if (active && isPersistent(s.plan) && u.tick % 5 === 0) await refreshPlanFile($)
   const agentsRunning = seen.some(a => a.status === 'running' || a.status === 'pending' || a.status === 'waiting')
   const waiting = s.health.needsYou
   if (waiting && notifiedFor !== waiting.since && now - waiting.since >= cfg.attention.delaySeconds * 1000) {
@@ -269,6 +329,7 @@ export const register: Register = on => {
       const prev = await read($, snap)
       // A hot reload keeps $.state: carry the snapshot on for the same session.
       await update($, snap, () => (prev.sessionId === sessionId ? { ...prev, cwd: e.cwd, model } : { ...S.EMPTY_SNAP, sessionId, cwd: e.cwd, model }))
+      await restorePlan($, sessionId)
       const cfg = await read($, config)
       await update($, ui, u => ({ ...u, tab: prev.sessionId === sessionId ? u.tab : cfg.defaultTab }))
       await $.command.register({
@@ -317,7 +378,10 @@ export const register: Register = on => {
     await guard('turn start', $, async () => {
       const now = await $.clock.now()
       const goal = truncate(e.text.split('\n').find(l => l.trim()) ?? '', 80) || undefined
-      await update($, snap, s => S.startTurn(s, now, goal))
+      await update($, snap, s => {
+        const started = S.startTurn(s, now, goal)
+        return isPersistent(s.plan) ? started : { ...started, plan: promptPlan(e.text, now, s.branch) }
+      })
       const cfg = await read($, config)
       startTicker($)
       await startBeat($)
@@ -333,7 +397,13 @@ export const register: Register = on => {
     await guard('turn complete', $, async () => {
       const now = await $.clock.now()
       const failed = e.reason === 'error'
-      await update($, snap, s => S.endTurn(s, now, failed))
+      await update($, snap, s => {
+        const ended = S.endTurn(s, now, failed)
+        const pct = ended.health.contextPct
+        const contextHistory = pct === undefined ? ended.health.contextHistory : [...ended.health.contextHistory, Math.round(pct)].slice(-20)
+        return { ...ended, plan: ended.plan ? settle(ended.plan, now) : null, health: { ...ended.health, contextHistory } }
+      })
+      await savePlan($)
       await saveHistory($)
       await beat($)
       const cfg = await read($, config)
@@ -368,7 +438,7 @@ export const register: Register = on => {
       await update($, snap, x => S.startCall(x, started))
       if (e.tool === 'TodoWrite' && Array.isArray(input.todos)) {
         const todos = input.todos as S.Todo[]
-        await update($, snap, x => S.syncTodos(x, todos, now))
+        await update($, snap, x => ({ ...S.syncTodos(x, todos, now), plan: mergeTodos(x.plan, todos, now, x.goal) }))
       }
       if (e.tool === 'AskUserQuestion' || e.tool === 'Agent') startTicker($)
     })
@@ -412,6 +482,20 @@ export const register: Register = on => {
           },
         }
       })
+      // Credit the call, its edit and its test to the step running now.
+      const testResult = patch.lastTest
+      await update($, snap, s => {
+        if (!s.plan) return s
+        let plan = attribute(s.plan, { kind: 'call' })
+        if (edited) plan = attribute(plan, { kind: 'edit', file: edited })
+        if (testResult) plan = attribute(plan, { kind: 'test', result: testResult })
+        return { ...s, plan: settle(plan, now) }
+      })
+      if (ok && filePath && /^(Read|Edit|Write|MultiEdit)$/.test(e.tool)) {
+        const looksLikePlan = isPlanPath(filePath) || (e.tool === 'Read' && /Implementation Plan\s*$/m.test(output.split('\n').slice(0, 3).join('\n')))
+        if (looksLikePlan) await loadPlanFile($, filePath, 'file', e.tool !== 'Read')
+      }
+      if (ok && e.tool === 'ExitPlanMode' && planModePath) await loadPlanFile($, planModePath, 'planmode', true)
       if (call.key && ok && cfg.estimate.enabled) {
         const key = call.key
         if (!waitedCalls.has(call.id)) {
@@ -483,7 +567,7 @@ export const register: Register = on => {
   on('classic.TaskCreated', async ($, e, next) => {
     await guard('task created', $, async () => {
       const now = await $.clock.now()
-      await update($, snap, s => S.addTask(s, e.task_id, e.task_subject, now, e.teammate_name))
+      await update($, snap, s => ({ ...S.addTask(s, e.task_id, e.task_subject, now, e.teammate_name), plan: taskEvent(s.plan, { id: e.task_id, title: e.task_subject, done: false }, now) }))
     })
     return next(e)
   })
@@ -491,8 +575,21 @@ export const register: Register = on => {
   on('classic.TaskCompleted', async ($, e, next) => {
     await guard('task completed', $, async () => {
       const now = await $.clock.now()
-      await update($, snap, s => S.completeTask(s, e.task_id, e.task_subject, now))
+      await update($, snap, s => ({ ...S.completeTask(s, e.task_id, e.task_subject, now), plan: taskEvent(s.plan, { id: e.task_id, title: e.task_subject, done: true }, now) }))
     })
+    return next(e)
+  })
+
+  // Plan mode names its plan file in an attachment; ExitPlanMode (tool end) loads it.
+  on('prompt.attachment', { type: 'plan_mode' }, async ($, e, next) => {
+    const path = (e as { detail?: { planFilePath?: unknown } }).detail?.planFilePath
+    if (typeof path === 'string') planModePath = path
+    return next(e)
+  })
+
+  on('prompt.attachment', { type: 'plan_mode_reentry' }, async ($, e, next) => {
+    const path = (e as { detail?: { planFilePath?: unknown } }).detail?.planFilePath
+    if (typeof path === 'string') planModePath = path
     return next(e)
   })
 
@@ -578,7 +675,7 @@ export const register: Register = on => {
     if (verb === 'export') {
       const s = await read($, snap)
       const json = JSON.stringify(
-        { turnStartedAt: s.turnStartedAt, turnEndedAt: s.turnEndedAt, phase: s.phase, toolCalls: s.toolCalls, recent: s.recent, tasks: s.tasks, agents: s.agents, health: s.health },
+        { turnStartedAt: s.turnStartedAt, turnEndedAt: s.turnEndedAt, phase: s.phase, toolCalls: s.toolCalls, recent: s.recent, tasks: s.tasks, agents: s.agents, health: s.health, plan: s.plan },
         null,
         2,
       )

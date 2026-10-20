@@ -418,6 +418,42 @@ function turnTimes(t: WatchHistoryTurn): string {
   return `${clock(t.at)} → ${t.ended && !t.interrupted ? clock(t.at + (t.durationMs ?? 0)) : t.ended ? '?' : 'now'}`
 }
 
+const BRANCHES_SHOWN = 4
+
+// A finished turn's branches: steps it moved, its test result, agents, files.
+function turnBranches(k: Kit, t: WatchHistoryTurn): unknown[] {
+  const { Text } = k.els
+  if (!t.ended) return []
+  const items: { glyph: string; color: string; label: string; value: string }[] = []
+  for (const st of t.steps) {
+    const [glyph, color] =
+      st.status === 'done' ? ['✓', STEP_COLOR.doneMark] : st.status === 'failed' ? ['✗', TINT.attention.fg] : st.status === 'running' ? ['▶', STEP_COLOR.run] : ['○', STEP_COLOR.wait]
+    items.push({ glyph, color, label: 'step', value: st.title })
+  }
+  if (t.tests) {
+    items.push(
+      t.tests.ok
+        ? { glyph: '✓', color: TINT.ok.fg, label: 'tests', value: `${t.tests.passed ? `${t.tests.passed} passed · ` : ''}${t.tests.command}` }
+        : { glyph: '✗', color: TINT.attention.fg, label: 'tests', value: `${t.tests.failed} failed · ${t.tests.command}` },
+    )
+  }
+  for (const a of t.agents) items.push({ glyph: '⚙', color: a.ok ? TINT.ok.fg : TINT.attention.fg, label: 'agent', value: `${a.label} ${time(a.durationMs, 'human')} ${a.ok ? '✓' : '✗'}` })
+  if (t.files.length) items.push({ glyph: '✎', color: TINT.violet.fg, label: 'files', value: t.files.map(basename).join(', ') })
+  const shown = items.slice(0, BRANCHES_SHOWN)
+  const extra = items.length - shown.length
+  return shown.map((it, i) => {
+    const last = i === shown.length - 1 && extra === 0
+    return (
+      <Text key={`br-${t.id}-${i}`} wrap="truncate-end">
+        <Text dimColor>{`      ${last ? '└─' : '├─'} `}</Text>
+        <Text color={it.color}>{it.glyph}</Text>
+        <Text dimColor>{` ${it.label.padEnd(5)} `}</Text>
+        {fit(k, it.value, inner(k) - 18)}
+      </Text>
+    )
+  }).concat(extra > 0 ? [<Text key={`br-${t.id}-more`} dimColor>{`      └─ … +${extra}`}</Text>] : [])
+}
+
 function HistoryGlance(v: View) {
   const { k, s } = v
   const { Box, Text, Select } = k.els
@@ -435,7 +471,7 @@ function HistoryGlance(v: View) {
     'turn-strip',
     ended.map(t => ({ ms: t.durationMs ?? 0, sem: isProblem(t) ? 'attention' : 'ok' })),
   )
-  const rows = shown.map(t => (
+  const rows = shown.flatMap(t => [
     <Box key={`row-${t.id}`} flexDirection="row" gap={1}>
       <Text dimColor>{turnTimes(t)}</Text>
       {Mark(k, !t.ended ? '▶' : isProblem(t) ? '✗' : '✓', !t.ended ? 'accent' : isProblem(t) ? 'attention' : 'ok')}
@@ -443,8 +479,9 @@ function HistoryGlance(v: View) {
         <Text wrap="truncate-end">{fit(k, t.title || '(no prompt)', inner(k) - 26)}</Text>
       </Box>
       <Text dimColor>{t.interrupted ? 'interrupted' : t.ended ? time(t.durationMs ?? 0, 'human') : 'running'}</Text>
-    </Box>
-  ))
+    </Box>,
+    ...turnBranches(k, t),
+  ])
   const more = turns.length > shown.length
   const picker = Select ? (
     <Select

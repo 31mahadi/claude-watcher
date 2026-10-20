@@ -33,6 +33,12 @@ export const hasRaster = (k: Kit) => k.cfg.useRaster && 'Raster' in k.els
 
 // Width available inside a card (border + padding take 4 columns).
 export const inner = (k: Kit) => Math.max(10, k.columns - (cardsOn(k) ? 4 : 0))
+// Svg pixels per pane column, so images track the pane's width.
+export const PX = 7
+export const maxPx = (k: Kit) => inner(k) * PX
+// Below this many inner columns, rows drop their secondary columns.
+export const NARROW = 40
+export const narrow = (k: Kit) => inner(k) < NARROW
 const cardsOn = (k: Kit) => k.cfg.visuals.cards && k.cfg.theme !== 'minimal' && !k.cfg.compact
 
 const GLYPHS: Record<WatchConfig['barStyle'], [string, string]> = {
@@ -53,7 +59,7 @@ export function Bar(k: Kit, key: string, fraction: number, sem: Semantic, label:
   const width = Math.max(6, inner(k) - label.length - 1)
   let bar
   if (hasSvg(k)) {
-    bar = svgEl(k, svg.bar(fraction, css(sem, k.cfg), TRACK_CSS, width * 7, BAR_PX), textBar(fraction, width, 'ascii'))
+    bar = svgEl(k, svg.bar(fraction, css(sem, k.cfg), TRACK_CSS, width * PX, BAR_PX), textBar(fraction, width, 'ascii'))
   } else if (hasRaster(k)) {
     const g = raster.bar(fraction, width, hex(sem, k.cfg), TRACK_HEX)
     bar = <Raster key={key} columns={g.columns} rows={1} cells={g.cells} />
@@ -151,8 +157,9 @@ export function SectionLabel(k: Kit, text: string) {
 export function MiniBar(k: Kit, key: string, fraction: number, sem: Semantic, mark?: number, cells = 10) {
   const { Text, Svg, Raster } = k.els
   const f = Math.max(0, Math.min(1, fraction))
+  cells = Math.min(cells, inner(k))
   if (hasSvg(k)) {
-    const w = cells * 7
+    const w = cells * PX
     const tick = mark !== undefined ? `<line x1="${Math.round(mark * w)}" y1="0" x2="${Math.round(mark * w)}" y2="${BAR_PX}" stroke="#8b949e" stroke-width="1"/>` : ''
     const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${BAR_PX}" viewBox="0 0 ${w} ${BAR_PX}"><rect width="${w}" height="${BAR_PX}" rx="${BAR_PX / 2}" fill="${TRACK_CSS}"/><rect width="${Math.round(f * w)}" height="${BAR_PX}" rx="${BAR_PX / 2}" fill="${css(sem, k.cfg)}"/>${tick}</svg>`
     return svgEl(k, source, `${Math.round(f * 100)}%`)
@@ -169,7 +176,7 @@ export function Segments(k: Kit, key: string, sems: readonly Semantic[]) {
   const { Box, Text, Svg, Raster } = k.els
   const n = Math.max(1, sems.length)
   if (hasSvg(k)) {
-    const total = Math.max(120, Math.min(inner(k) * 7, 420))
+    const total = maxPx(k)
     const gap = n > 40 ? 1 : 2
     const w = (total - gap * (n - 1)) / n
     const fill = (s: Semantic) => (s === 'dim' ? '#2f3a4a' : css(s, k.cfg))
@@ -203,6 +210,7 @@ export function Segments(k: Kit, key: string, sems: readonly Semantic[]) {
 export function TurnStrip(k: Kit, key: string, turns: readonly { ms: number; sem: Semantic }[]) {
   const { Box, Text, Svg } = k.els
   if (turns.length === 0) return null
+  turns = turns.slice(-Math.max(1, Math.floor(maxPx(k) / (BAR_PX + 2))))
   const max = Math.max(...turns.map(t => t.ms), 1)
   if (hasSvg(k)) {
     const tall = 14
@@ -287,12 +295,13 @@ export function Gantt(k: Kit, key: string, lanes: readonly GanttLane[], from: nu
   const width = inner(k)
   if (hasSvg(k)) {
     // One row per lane: the label is pane text (never scaled), the bar a small image.
-    const plot = Math.max(80, (inner(k) - 16) * 6)
+    const labelW = narrow(k) ? 8 : 15
+    const plot = Math.max(PX * 4, (inner(k) - labelW - 1) * PX)
     return (
       <Box key={key} flexDirection="column">
         {lanes.map((l, i) => (
           <Box key={`lane-${i}`} flexDirection="row" gap={1} alignItems="center">
-            <Box width={15} flexShrink={0}>
+            <Box width={labelW} flexShrink={0}>
               <Text dimColor wrap="truncate-end">
                 {l.label}
               </Text>
@@ -304,7 +313,7 @@ export function Gantt(k: Kit, key: string, lanes: readonly GanttLane[], from: nu
     )
   }
   if (hasRaster(k)) {
-    const labelW = 10
+    const labelW = narrow(k) ? 6 : 10
     const g = raster.swimlanes(
       lanes.map(l => ({ start: l.start, end: l.end, fg: hex(l.sem, k.cfg) })),
       from,

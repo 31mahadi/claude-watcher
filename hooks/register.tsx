@@ -456,7 +456,7 @@ async function alert($: $, text: string, urgent: boolean) {
 }
 
 async function kitFor($: $, e: { surface: string; props: { bodyColumns: number; scroll?: { bodyRows?: number } } }, els: Kit['els']): Promise<Kit> {
-  const columns = e.surface === 'terminal' ? e.props.bodyColumns : Math.max(e.props.bodyColumns, 44)
+  const columns = e.props.bodyColumns
   return { els, surface: e.surface, cfg: await read($, config), columns, rows: e.props.scroll?.bodyRows }
 }
 

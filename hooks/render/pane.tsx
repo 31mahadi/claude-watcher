@@ -9,7 +9,7 @@ import { estimateMs } from '../estimate'
 import { isPersistent, planProgress } from '../plan'
 import { ago, basename, pct, seconds, time, truncate } from '../format'
 import { resolve, STATE_HEX, TINT, type Semantic, type Tint } from './colors'
-import { Bar, Card, Donut, Gantt, inner, Mark, MiniBar, Pulse, Row, Badge, Section, Segments, TurnStrip, type GanttLane, type Kit } from './widgets'
+import { Bar, Card, Donut, Gantt, inner, Mark, narrow, MiniBar, Pulse, Row, Badge, Section, Segments, TurnStrip, type GanttLane, type Kit } from './widgets'
 
 export type View = {
   k: Kit
@@ -37,7 +37,7 @@ export type View = {
 // 'turn' is the adaptive dashboard; the others are detail views reached by /watch <tab>.
 export const TABS: readonly WatchTab[] = ['turn', 'plan', 'agents', 'calls', 'history', 'checks', 'changes', 'sessions', 'health', 'config']
 
-// The VS Code side panel is ~45-55 columns; only truly tiny panes go compact.
+// The VS Code side panel is ~45-55 columns; only truly tiny panes go compact, on any surface.
 const COMPACT_BELOW = 36
 
 const PHASE_LABEL: Record<WatchSnapshot['phase'], string> = {
@@ -116,7 +116,7 @@ export function Pane(v: View) {
   if (v.ui.tab === 'turn') {
     // Two blocks: what is happening now on top, history pinned to the bottom with the
     // controls as its last row. The spacer between them takes the pane's spare height.
-    const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
+    const compact = v.k.cfg.compact || v.k.columns < COMPACT_BELOW
     return (
       <Box flexDirection="column" height={v.k.rows}>
         <Box key="now" flexDirection="column" gap={gap} borderStyle="round" borderColor={STATE_HEX[nowSem(v)]} paddingX={1}>
@@ -645,7 +645,7 @@ const DONE_SHOWN = 6
 const PENDING_SHOWN = 2
 
 function Dashboard(v: View) {
-  const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
+  const compact = v.k.cfg.compact || v.k.columns < COMPACT_BELOW
   const attention = AttentionCard(v)
   // Idle: nothing running and nothing to act on → one line, then history.
   if (!isActive(v.s) && !attention && !compact) {
@@ -935,14 +935,16 @@ function changeRow(k: Kit, r: WatchChange, dim: boolean) {
   return (
     <Box flexDirection="row">
       <Box flexGrow={1} flexShrink={1}>
-        <Text wrap="truncate-end" dimColor={dim}>{fit(k, r.path, inner(k) - 20)}</Text>
+        <Text wrap="truncate-end" dimColor={dim}>{fit(k, r.path, inner(k) - (narrow(k) ? 12 : 20))}</Text>
       </Box>
-      <Box width={11} justifyContent="flex-end">
+      <Box width={11} flexShrink={0} justifyContent="flex-end">
         <Text dimColor={dim}>{counts}</Text>
       </Box>
-      <Box width={8} justifyContent="flex-end">
-        <Text dimColor>{r.lastTurn ? `turn ${r.lastTurn}` : ''}</Text>
-      </Box>
+      {narrow(k) ? null : (
+        <Box width={8} flexShrink={0} justifyContent="flex-end">
+          <Text dimColor>{r.lastTurn ? `turn ${r.lastTurn}` : ''}</Text>
+        </Box>
+      )}
     </Box>
   )
 }
@@ -959,15 +961,15 @@ function ChecksSection(v: View, all = false) {
     const row = (
       <Box flexDirection="row" gap={1}>
         <Box flexGrow={1} flexShrink={1}>
-          <Text wrap="truncate-end">{fit(k, c.command, inner(k) - 30)}</Text>
+          <Text wrap="truncate-end">{fit(k, c.command, inner(k) - (narrow(k) ? 22 : 30))}</Text>
         </Box>
         <Text wrap="truncate-end">
           {c.runs.slice(-5).map((r, i) => (
             <Text color={resolve(r.ok ? 'ok' : 'attention', k.cfg)}>{`${i ? ' ' : ''}${r.ok ? '✓' : '✗'}`}</Text>
           ))}
         </Text>
-        <Box width={18} justifyContent="flex-end">
-          <Text dimColor>{`${ago(now - last.at)} · ${outcome}`}</Text>
+        <Box width={narrow(k) ? 10 : 18} flexShrink={0} justifyContent="flex-end">
+          <Text dimColor wrap="truncate-end">{narrow(k) ? outcome : `${ago(now - last.at)} · ${outcome}`}</Text>
         </Box>
       </Box>
     )

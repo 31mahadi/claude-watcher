@@ -1,5 +1,5 @@
 import type { WatchConfig } from '../../types'
-import { css, hex, resolve, TRACK_CSS, TRACK_HEX, type Semantic } from './colors'
+import { css, hex, resolve, TINT, TRACK_CSS, TRACK_HEX, type Semantic, type Tint } from './colors'
 import * as raster from './raster'
 import * as svg from './svg'
 
@@ -163,7 +163,8 @@ export function Segments(k: Kit, key: string, sems: readonly Semantic[]) {
     const total = Math.max(120, Math.min(inner(k) * 7, 420))
     const gap = n > 40 ? 1 : 2
     const w = (total - gap * (n - 1)) / n
-    const rects = sems.map((s, i) => `<rect x="${(i * (w + gap)).toFixed(1)}" y="0" width="${w.toFixed(1)}" height="${BAR_PX}" rx="1" fill="${css(s, k.cfg)}"/>`)
+    const fill = (s: Semantic) => (s === 'dim' ? '#2f3a4a' : css(s, k.cfg))
+    const rects = sems.map((s, i) => `<rect x="${(i * (w + gap)).toFixed(1)}" y="0" width="${w.toFixed(1)}" height="${BAR_PX}" rx="1" fill="${fill(s)}"/>`)
     return (
       <Box key={key}>
         <Svg source={`<svg xmlns="http://www.w3.org/2000/svg" data-kind="segments" width="${total}" height="${BAR_PX}" viewBox="0 0 ${total} ${BAR_PX}">${rects.join('')}</svg>`} alt={sems.map(s => (s === 'ok' ? '▰' : '▱')).join('')} />
@@ -216,6 +217,19 @@ export function TurnStrip(k: Kit, key: string, turns: readonly { ms: number; sem
         ))}
       </Text>
     </Box>
+  )
+}
+
+// A tinted badge: " label value ".
+export function Badge(k: Kit, tint: Tint, label: string, value: unknown) {
+  const { Text } = k.els
+  const t = TINT[tint]
+  return (
+    <Text backgroundColor={t.bg} color={t.fg}>
+      {` ${label} `}
+      {value}
+      {' '}
+    </Text>
   )
 }
 

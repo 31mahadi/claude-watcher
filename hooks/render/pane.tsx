@@ -8,8 +8,8 @@ import { CHOICES, getPath } from '../config'
 import { estimateMs } from '../estimate'
 import { isPersistent, planProgress } from '../plan'
 import { ago, basename, pct, seconds, time, truncate } from '../format'
-import { resolve, type Semantic } from './colors'
-import { Bar, Card, Donut, Gantt, inner, Mark, MiniBar, Pulse, Row, Section, Segments, TurnStrip, type GanttLane, type Kit } from './widgets'
+import { resolve, STATE_HEX, TINT, type Semantic, type Tint } from './colors'
+import { Bar, Card, Donut, Gantt, inner, Mark, MiniBar, Pulse, Row, Badge, Section, Segments, TurnStrip, type GanttLane, type Kit } from './widgets'
 
 export type View = {
   k: Kit
@@ -117,7 +117,7 @@ export function Pane(v: View) {
     const compact = v.k.cfg.compact || (v.k.surface === 'terminal' && v.k.columns < COMPACT_BELOW)
     return (
       <Box flexDirection="column" height={v.k.rows}>
-        <Box key="now" flexDirection="column" gap={gap} borderStyle="round" borderColor={resolve('dim', v.k.cfg)} paddingX={1}>
+        <Box key="now" flexDirection="column" gap={gap} borderStyle="round" borderColor={STATE_HEX[nowSem(v)]} paddingX={1}>
           {NowBlock(v, compact)}
         </Box>
         <Box key="spacer" flexGrow={1} />
@@ -225,6 +225,17 @@ function stepSem(st: WatchPlanStep['status']): Semantic {
   return st === 'done' ? 'ok' : st === 'failed' ? 'attention' : st === 'running' ? 'accent' : 'dim'
 }
 
+// The NOW block's border colour: the state at a glance.
+function nowSem(v: View): Semantic {
+  const s = v.s
+  if (s.health.needsYou) return 'warn'
+  const since = s.turnStartedAt ?? Number.POSITIVE_INFINITY
+  if ((s.health.lastTest && !s.health.lastTest.ok && s.health.lastTest.at >= since) || (s.health.lastError && s.health.lastError.at >= since)) return 'attention'
+  if (isActive(s)) return 'accent'
+  if (s.plan?.endedAt) return 'ok'
+  return 'dim'
+}
+
 // The NOW block: attention, goal + segmented progress, one "now" line, agents, signal chips.
 function NowBlock(v: View, compact: boolean): unknown[] {
   const { k, s, now } = v
@@ -274,8 +285,8 @@ function NowBlock(v: View, compact: boolean): unknown[] {
     out.push(
       <Text key="now-line" wrap="truncate-end">
         {Mark(k, '▶', 'accent')}
-        {` ${step ? `${step.title} · ` : ''}`}
-        <Text dimColor>{call}</Text>
+        {step ? <Text bold>{` ${step.title}`}</Text> : null}
+        <Text color={TINT.teal.fg}>{`  ${call}`}</Text>
       </Text>,
     )
   } else {
@@ -290,7 +301,7 @@ function NowBlock(v: View, compact: boolean): unknown[] {
   return out.filter(Boolean)
 }
 
-// tests ✗✗✓   changes +63 −8   ctx ◔ 57% ~6t
+// tests ✗✗✓   changes +63 −8   ctx ◔ 57% ~6t — tinted badges.
 function SignalChips(v: View) {
   const { k, s } = v
   const { Box, Text } = k.els
@@ -300,37 +311,26 @@ function SignalChips(v: View) {
   const checks = checkRows(hl.checks ?? {})
   const test = checks.find(c => c.kind === 'test') ?? checks[0]
   if (test) {
-    chips.push(
-      <Text key="chip-tests">
-        <Text dimColor>tests </Text>
-        {test.runs.slice(-5).map(r => (
-          <Text color={resolve(r.ok ? 'ok' : 'attention', cfg)}>{r.ok ? '✓' : '✗'}</Text>
-        ))}
-      </Text>,
-    )
+    const last = test.runs[test.runs.length - 1]!
+    const tint: Tint = last.ok ? 'ok' : 'attention'
+    chips.push(Badge(k, tint, 'tests', test.runs.slice(-5).map(r => (
+      <Text color={r.ok ? TINT.ok.fg : TINT.attention.fg}>{r.ok ? '✓' : '✗'}</Text>
+    ))))
   }
   if (hl.gitBase) {
     const t = changesTotal(hl.changes ?? [])
-    chips.push(
-      <Text key="chip-changes" dimColor={t.files === 0}>
-        {t.files ? `changes +${t.added} −${t.removed}` : 'no changes'}
-      </Text>,
-    )
+    chips.push(Badge(k, t.files ? 'violet' : 'slate', 'changes', t.files ? `+${t.added} −${t.removed}` : 'none'))
   }
   if (hl.contextPct !== undefined) {
-    const sem: Semantic | undefined = hl.contextPct >= 90 ? 'attention' : hl.contextPct >= cfg.health.contextWarnPct ? 'warn' : undefined
+    const tint: Tint = hl.contextPct >= 90 ? 'attention' : hl.contextPct >= cfg.health.contextWarnPct ? 'warn' : 'teal'
     const ring = '○◔◑◕●'[Math.min(4, Math.round((hl.contextPct / 100) * 4))]
     const f = forecast(hl.contextHistory ?? [], lastCompactIndex(s.history ?? []), hl.contextPct, cfg.health.compactAtPct ?? 85)
     const tail = f.kind === 'turns' ? ` ~${f.turns}t` : f.kind === 'next' ? ' next turn' : ''
-    chips.push(
-      <Text key="chip-ctx" color={sem ? resolve(sem, cfg) : undefined}>
-        {`ctx ${ring} ${pct(hl.contextPct)}${tail}`}
-      </Text>,
-    )
+    chips.push(Badge(k, tint, 'ctx', `${ring} ${pct(hl.contextPct)}${tail}`))
   }
   if (chips.length === 0) return null
   return (
-    <Box key="signals" flexDirection="row" columnGap={3} flexWrap="wrap">
+    <Box key="signals" flexDirection="row" columnGap={1} rowGap={0} flexWrap="wrap">
       {chips}
     </Box>
   )

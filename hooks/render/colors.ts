@@ -41,6 +41,21 @@ const NAMED_HEX: Record<string, number> = {
 
 export const TRACK_HEX = 0x30363d
 
+// Badge tints: a bright foreground on a dark wash of the same hue.
+export type Tint = 'ok' | 'attention' | 'warn' | 'accent' | 'violet' | 'teal' | 'slate'
+export const TINT: Record<Tint, { fg: string; bg: string }> = {
+  ok: { fg: '#3fb950', bg: '#12261e' },
+  attention: { fg: '#f85149', bg: '#2d1416' },
+  warn: { fg: '#d29922', bg: '#2b2111' },
+  accent: { fg: '#58a6ff', bg: '#111d2e' },
+  violet: { fg: '#bc8cff', bg: '#231a33' },
+  teal: { fg: '#39c5cf', bg: '#10272a' },
+  slate: { fg: '#8b949e', bg: '#1c2128' },
+}
+
+// Hex for borders that follow state.
+export const STATE_HEX: Record<Semantic, string> = { accent: '#58a6ff', ok: '#3fb950', warn: '#d29922', attention: '#f85149', dim: '#3d444d' }
+
 // A user override in config.colors wins; empty string means "use the theme".
 function override(sem: Semantic, cfg: WatchConfig): string | undefined {
   const v = cfg.colors[sem]

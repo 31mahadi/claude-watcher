@@ -241,6 +241,56 @@ function nowSem(v: View): Semantic {
   return 'dim'
 }
 
+// Step list colours: done soft green, running bright blue on a faint band, waiting grey.
+const STEP_COLOR = { doneMark: '#3fb950', done: '#7ee2a0', run: '#79c0ff', runBand: '#111d2e', wait: '#6e7681' }
+const STEPS_SHOWN = 12
+
+// Steps in execution order, one line each. Past STEPS_SHOWN, done steps fold into one line.
+function StepList(v: View, plan: WatchPlan): unknown[] {
+  const { k, s, now } = v
+  const { Box, Text } = k.els
+  const steps = plan.steps
+  const doneIdx = steps.map((x, i) => (x.status === 'done' ? i : -1)).filter(i => i >= 0)
+  const fold = steps.length > STEPS_SHOWN && doneIdx.length > 1 ? new Set(doneIdx.slice(0, -1)) : new Set<number>()
+  const rows: unknown[] = []
+  if (fold.size) {
+    rows.push(
+      <Text key="steps-folded">
+        <Text color={STEP_COLOR.doneMark}>✓</Text>
+        <Text color={STEP_COLOR.done}>{` ${fold.size} done`}</Text>
+      </Text>,
+    )
+  }
+  steps.forEach((step, i) => {
+    if (fold.has(i)) return
+    const running = step.status === 'running'
+    const mark = step.status === 'done' ? '✓' : step.status === 'failed' ? '✗' : running ? '▶' : '○'
+    const markColor = step.status === 'done' ? STEP_COLOR.doneMark : step.status === 'failed' ? resolve('attention', k.cfg) : running ? STEP_COLOR.run : STEP_COLOR.wait
+    const textColor = step.status === 'done' ? STEP_COLOR.done : step.status === 'failed' ? resolve('attention', k.cfg) : running ? STEP_COLOR.run : STEP_COLOR.wait
+    const dur = step.startedAt !== undefined ? span((step.endedAt ?? now) - step.startedAt) : ''
+    rows.push(
+      <Box key={`step-${step.id}`} flexDirection="row" justifyContent="space-between" gap={1}>
+        <Box flexDirection="row" gap={1} flexShrink={1}>
+          <Text color={markColor}>{mark}</Text>
+          <Text color={textColor} bold={running ? true : undefined} backgroundColor={running ? STEP_COLOR.runBand : undefined} wrap="truncate-end">
+            {step.title}
+          </Text>
+        </Box>
+        <Text dimColor>{dur}</Text>
+      </Box>,
+    )
+    if (running && isActive(s)) {
+      const call = s.current ? `${s.current.label} ${span(now - s.current.startedAt)}` : 'thinking'
+      rows.push(
+        <Text key="step-live" color={TINT.teal.fg} wrap="truncate-end">
+          {`    ${call}`}
+        </Text>,
+      )
+    }
+  })
+  return rows
+}
+
 // "41s", "21m", "2h 5m": a length of time that never reads like a clock.
 function span(ms: number): string {
   const sec = Math.max(0, Math.round(ms / 1000))
@@ -286,6 +336,7 @@ function NowBlock(v: View, compact: boolean): unknown[] {
           <Text dimColor>{`${p.done} done${left}`}</Text>
         </Box>,
       )
+      if (!compact) rows.push(...StepList(v, plan))
     }
     out.push(Section(k, 'plan', 'PLAN', rows))
   }
@@ -295,7 +346,10 @@ function NowBlock(v: View, compact: boolean): unknown[] {
   }
 
   const nowRows: unknown[] = []
-  if (active) {
+  const listed = !!plan && plan.steps.length > 0 && !!planProgress(plan).current
+  if (active && listed) {
+    // The step list already shows the running step and its live command.
+  } else if (active) {
     const step = plan ? planProgress(plan).current : undefined
     const call = s.current ? `${s.current.label} ${span(now - s.current.startedAt)}` : 'thinking'
     nowRows.push(

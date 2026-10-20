@@ -236,7 +236,16 @@ function nowSem(v: View): Semantic {
   return 'dim'
 }
 
-// The NOW block: attention, goal + segmented progress, one "now" line, agents, signal chips.
+// "41s", "21m", "2h 5m": a length of time that never reads like a clock.
+function span(ms: number): string {
+  const sec = Math.max(0, Math.round(ms / 1000))
+  if (sec < 60) return `${sec}s`
+  const m = Math.floor(sec / 60)
+  if (m < 60) return `${m}m`
+  return `${Math.floor(m / 60)}h ${m % 60}m`
+}
+
+// The NOW block: attention, then labelled rows — PLAN (goal, step progress) and NOW (live line, agents, signals).
 function NowBlock(v: View, compact: boolean): unknown[] {
   const { k, s, now } = v
   const { Box, Text } = k.els
@@ -246,43 +255,45 @@ function NowBlock(v: View, compact: boolean): unknown[] {
   if (attention) out.push(attention)
   const plan = s.plan
   const active = isActive(s)
-  const turns = (s.history ?? []).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
-  const lastTurn = turns[turns.length - 1]
 
-  // Goal row: title left, steps and elapsed right.
-  const p = plan ? planProgress(plan) : undefined
-  const title = plan?.title || (lastTurn?.title ?? 'Watcher')
-  const ticket = plan?.ticket && !title.includes(plan.ticket) ? `${plan.ticket} · ` : ''
-  const elapsed = plan ? time((plan.endedAt ?? (active ? now : (s.turnEndedAt ?? now))) - plan.startedAt, cfg.timeFormat) : ''
-  out.push(
-    <Box key="goal" flexDirection="row" justifyContent="space-between" gap={1}>
-      <Box flexDirection="row" gap={1} flexShrink={1}>
-        {active ? Pulse(k, 'accent') : Mark(k, plan?.endedAt ? '✓' : '○', plan?.endedAt ? 'ok' : 'dim')}
-        <Text bold wrap="truncate-end">
-          {`${ticket}${title}`}
-        </Text>
-      </Box>
-      <Text dimColor>{[p && p.total ? `${p.done}/${p.total}` : undefined, elapsed].filter(Boolean).join(' · ')}</Text>
-    </Box>,
-  )
-  if (plan && p && p.total) {
-    out.push(
-      <Box key="progress" flexDirection="row" justifyContent="space-between" gap={1} alignItems="center">
-        {Segments(k, 'plan-segments', plan.steps.map(x => stepSem(x.status)))}
-        <Text dimColor>{p.done === p.total ? 'done' : p.remainingMs ? `~${time(p.remainingMs, 'human')} left` : ''}</Text>
+  // A prompt-only plan says nothing the idle line doesn't; show it while a turn runs.
+  if (plan && (plan.steps.length > 0 || active)) {
+    const p = planProgress(plan)
+    const ticket = plan.ticket && !plan.title.includes(plan.ticket) ? `${plan.ticket} · ` : ''
+    const elapsed = `${span((plan.endedAt ?? (active ? now : (s.turnEndedAt ?? now))) - plan.startedAt)} elapsed`
+    const position = p.total ? (p.done === p.total ? `all ${p.total} steps done` : `step ${Math.min(p.total, p.done + 1)} of ${p.total}`) : undefined
+    const rows: unknown[] = [
+      <Box key="goal" flexDirection="row" justifyContent="space-between" gap={1}>
+        <Box flexDirection="row" gap={1} flexShrink={1}>
+          {active ? Pulse(k, 'accent') : Mark(k, plan.endedAt ? '✓' : '○', plan.endedAt ? 'ok' : 'dim')}
+          <Text bold wrap="truncate-end">
+            {`${ticket}${plan.title || 'Working'}`}
+          </Text>
+        </Box>
+        <Text dimColor>{[position, elapsed].filter(Boolean).join(' · ')}</Text>
       </Box>,
-    )
+    ]
+    if (p.total) {
+      const left = p.done === p.total ? '' : p.remainingMs ? ` · ~${span(p.remainingMs)} left` : ''
+      rows.push(
+        <Box key="progress" flexDirection="row" justifyContent="space-between" gap={1} alignItems="center">
+          {Segments(k, 'plan-segments', plan.steps.map(x => stepSem(x.status)))}
+          <Text dimColor>{`${p.done} done${left}`}</Text>
+        </Box>,
+      )
+    }
+    out.push(Section(k, 'plan', 'PLAN', rows))
   }
   if (compact) {
     out.push(SignalChips(v))
     return out.filter(Boolean)
   }
 
-  // The single "now" line.
+  const nowRows: unknown[] = []
   if (active) {
-    const step = p?.current
-    const call = s.current ? `${s.current.label} ${time(now - s.current.startedAt, cfg.timeFormat)}` : 'thinking'
-    out.push(
+    const step = plan ? planProgress(plan).current : undefined
+    const call = s.current ? `${s.current.label} ${span(now - s.current.startedAt)}` : 'thinking'
+    nowRows.push(
       <Text key="now-line" wrap="truncate-end">
         {Mark(k, '▶', 'accent')}
         {step ? <Text bold>{` ${step.title}`}</Text> : null}
@@ -290,14 +301,15 @@ function NowBlock(v: View, compact: boolean): unknown[] {
       </Text>,
     )
   } else {
-    out.push(IdleLine(v))
+    nowRows.push(IdleLine(v))
   }
-
   if (s.agents.length) {
     const chart = Gantt(k, 'timeline', lanes(v), ganttFrom(v), now)
-    out.push(chart ?? <Box key="agents" flexDirection="column">{s.agents.slice(-4).map(a => agentRow(v, a))}</Box>)
+    nowRows.push(chart ?? <Box key="agents" flexDirection="column">{s.agents.slice(-4).map(a => agentRow(v, a))}</Box>)
   }
-  out.push(SignalChips(v))
+  const chips = SignalChips(v)
+  if (chips) nowRows.push(chips)
+  out.push(Section(k, 'now-rows', 'NOW', nowRows))
   return out.filter(Boolean)
 }
 
@@ -319,14 +331,14 @@ function SignalChips(v: View) {
   }
   if (hl.gitBase) {
     const t = changesTotal(hl.changes ?? [])
-    chips.push(Badge(k, t.files ? 'violet' : 'slate', 'changes', t.files ? `+${t.added} −${t.removed}` : 'none'))
+    chips.push(Badge(k, t.files ? 'violet' : 'slate', 'files changed', t.files ? `+${t.added} −${t.removed}` : 'none'))
   }
   if (hl.contextPct !== undefined) {
     const tint: Tint = hl.contextPct >= 90 ? 'attention' : hl.contextPct >= cfg.health.contextWarnPct ? 'warn' : 'teal'
     const ring = '○◔◑◕●'[Math.min(4, Math.round((hl.contextPct / 100) * 4))]
     const f = forecast(hl.contextHistory ?? [], lastCompactIndex(s.history ?? []), hl.contextPct, cfg.health.compactAtPct ?? 85)
-    const tail = f.kind === 'turns' ? ` ~${f.turns}t` : f.kind === 'next' ? ' next turn' : ''
-    chips.push(Badge(k, tint, 'ctx', `${ring} ${pct(hl.contextPct)}${tail}`))
+    const tail = f.kind === 'turns' ? ` · ~${f.turns} turns left` : f.kind === 'next' ? ' · compacts next turn' : ''
+    chips.push(Badge(k, tint, 'context', `${ring} ${pct(hl.contextPct)}${tail}`))
   }
   if (chips.length === 0) return null
   return (
@@ -354,14 +366,15 @@ function HistoryGlance(v: View) {
       <Text dimColor>{clock(t.at)}</Text>
       {Mark(k, !t.ended ? '▶' : isProblem(t) ? '✗' : '✓', !t.ended ? 'accent' : isProblem(t) ? 'attention' : 'ok')}
       <Text wrap="truncate-end">{fit(k, t.title || '(no prompt)', inner(k) - 18)}</Text>
-      <Text dimColor>{t.interrupted ? 'interrupted' : t.ended ? time(t.durationMs ?? 0, cfg.timeFormat) : ''}</Text>
+      <Text dimColor>{t.interrupted ? 'interrupted' : t.ended ? time(t.durationMs ?? 0, 'human') : 'running'}</Text>
     </Box>
   ))
   return (
     <Box key="history" flexDirection="column">
       <Box flexDirection="row" gap={2} alignItems="center">
-        <Text dimColor bold>HISTORY</Text>
+        <Text dimColor bold>TURNS</Text>
         {strip}
+        <Text dimColor>bar height = turn length · red = problem</Text>
       </Box>
       {rows}
     </Box>

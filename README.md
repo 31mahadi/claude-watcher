@@ -42,7 +42,7 @@ claude --plugin-dir ./claude-watcher
 | `/watch export` | Copy the last turn as JSON and print it |
 | `/watch mute 30m` / `/watch unmute` | Silence or restore alerts |
 | `/watch checks` / `/watch changes` | Every check run with failure output / the full change ledger |
-| `/watch clear [history\|plan\|all]` | Empty the history, dismiss the plan (✕ on the plan card does the same), or both |
+| `/watch clear [history\|plan\|checks\|all]` | Empty the history, dismiss the plan, empty the checks, or all three |
 
 ## Dashboard
 

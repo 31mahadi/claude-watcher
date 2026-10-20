@@ -67,12 +67,28 @@ const BUILD = new RegExp(`^${PM} build\\b|^(?:cargo|go) build\\b|^(?:npx\\s+)?(?
 
 // What kind of check a shell line runs, judged by each command's own words:
 // quoted text, comments, `cd` and env assignments do not count.
+// Drop heredoc bodies: `cmd <<'EOF'` … `EOF` lines are data, not commands.
+function withoutHeredocs(command: string): string {
+  const out: string[] = []
+  let end: string | undefined
+  for (const line of command.split('\n')) {
+    if (end !== undefined) {
+      if (line.trim() === end) end = undefined
+      continue
+    }
+    out.push(line)
+    const m = /<<-?\s*(['"]?)(\w+)\1/.exec(line)
+    if (m) end = m[2]
+  }
+  return out.join('\n')
+}
+
 export function classifyCommand(command: string): 'test' | 'lint' | 'build' | undefined {
-  const bare = command
+  const bare = withoutHeredocs(command)
     .toLowerCase()
     .replace(/(["'])(?:\\.|(?!\1).)*\1/g, ' ')
     .replace(/(^|\s)#.*$/gm, ' ')
-  const segments = bare.split(/&&|\|\||;|\|/).map(x => x.trim().replace(/^(?:\w+=\S*\s+)+/, ''))
+  const segments = bare.split(/&&|\|\||;|\||\n/).map(x => x.trim().replace(/^(?:\w+=\S*\s+)+/, ''))
   const runs = segments.filter(x => x && !/^cd\b/.test(x))
   if (runs.some(x => TEST.test(x))) return 'test'
   if (runs.some(x => LINT.test(x))) return 'lint'

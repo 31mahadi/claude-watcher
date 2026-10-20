@@ -464,7 +464,7 @@ export const register: Register = on => {
       await $.command.register({
         name: 'watch',
         description: 'Claude Watcher: toggle the dashboard, or /watch <tab|config|reset|export|mute|sessions>',
-        argumentHint: '[turn|plan|agents|calls|history|sessions|health|config|clear [history|plan]|reset|export|mute <30m>]',
+        argumentHint: '[turn|plan|agents|calls|history|sessions|health|config|clear [history|plan|checks]|reset|export|mute <30m>]',
       })
       await refreshGit($).catch(() => undefined)
       await startBeat($)
@@ -860,7 +860,11 @@ export const register: Register = on => {
         await saveLog($)
       }
       if (what === 'plan' || what === 'all') await dismissPlan($)
-      return { text: `Watcher: ${what === 'all' ? 'history and plan' : what} cleared.` }
+      if (what === 'checks' || what === 'all') {
+        await update($, snap, s => ({ ...s, health: { ...s.health, checks: {} } }))
+        await saveChecks($)
+      }
+      return { text: `Watcher: ${what === 'all' ? 'history, plan and checks' : what} cleared.` }
     }
     if (verb === 'mute') {
       const ms = parseDuration(arg || '30m')

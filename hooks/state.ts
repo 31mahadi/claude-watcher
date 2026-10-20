@@ -33,9 +33,11 @@ export function resetTurn(s: WatchSnapshot): WatchSnapshot {
   }
 }
 
-export function startTurn(s: WatchSnapshot, now: number): WatchSnapshot {
+export function startTurn(s: WatchSnapshot, now: number, goal?: string): WatchSnapshot {
   return {
     ...s,
+    goal,
+    lastEventAt: now,
     phase: 'thinking',
     turnStartedAt: now,
     turnEndedAt: null,
@@ -66,6 +68,7 @@ export function startCall(s: WatchSnapshot, call: WatchCall): WatchSnapshot {
     phase: isQuestion ? 'waiting_question' : call.agentId ? s.phase : 'tool',
     current: call.agentId ? s.current : call,
     toolCalls: s.toolCalls + 1,
+    lastEventAt: call.startedAt,
     agents,
     tasks: markRunning(s.tasks, call.startedAt),
     health: isQuestion
@@ -85,6 +88,7 @@ export function endCall(s: WatchSnapshot, call: WatchCall, keep: number): WatchS
     phase: isMine ? 'thinking' : s.phase,
     current: isMine ? null : s.current,
     recent: [...s.recent, call].slice(-Math.max(keep, 50)),
+    lastEventAt: call.startedAt + (call.durationMs ?? 0),
     agents,
     health: { ...s.health, needsYou: stillWaiting ? s.health.needsYou : null },
   }

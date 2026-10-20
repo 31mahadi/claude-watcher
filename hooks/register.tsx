@@ -3,8 +3,8 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { WatchCall, WatchNeedsYou, WatchPeer, WatchSnapshot, WatchTab, WatchUi } from '../types'
 import { DEFAULTS, deepMergeRaw, getPath, mergeConfig, parseValue, patchFor } from './config'
-import { normalizeKey, remember } from './estimate'
-import { parseDuration, time, toolLabel } from './format'
+import { normalizeKey, remember, stepKind } from './estimate'
+import { parseDuration, time, toolLabel, truncate } from './format'
 import { classifyCommand, parseGitStatus, parseTestOutput } from './health'
 import { needsYouText, Pane, summary, TABS, type View } from './render/pane'
 import type { Kit } from './render/widgets'
@@ -316,7 +316,8 @@ export const register: Register = on => {
     if (e.agentId) return next(e)
     await guard('turn start', $, async () => {
       const now = await $.clock.now()
-      await update($, snap, s => S.startTurn(s, now))
+      const goal = truncate(e.text.split('\n').find(l => l.trim()) ?? '', 80) || undefined
+      await update($, snap, s => S.startTurn(s, now, goal))
       const cfg = await read($, config)
       startTicker($)
       await startBeat($)
@@ -358,6 +359,7 @@ export const register: Register = on => {
         tool: e.tool,
         label: toolLabel(e.tool, input, cfg),
         key: key ?? '',
+        kindKey: key ? `${cfg.estimate.perProject ? `${s.cwd}::` : ''}kind:${stepKind(e.tool, input)}` : undefined,
         startedAt: now,
         agentId: e.agentId,
         note: timeout ? `timeout=${timeout}` : undefined,
@@ -413,7 +415,11 @@ export const register: Register = on => {
       if (call.key && ok && cfg.estimate.enabled) {
         const key = call.key
         if (!waitedCalls.has(call.id)) {
-          await update($, estimates, h => remember(h, key, durationMs, cfg.estimate.historySize, HISTORY_KEYS))
+          const kindKey = call.kindKey
+          await update($, estimates, h => {
+            const withKey = remember(h, key, durationMs, cfg.estimate.historySize, HISTORY_KEYS)
+            return kindKey ? remember(withKey, kindKey, durationMs, cfg.estimate.historySize, HISTORY_KEYS) : withKey
+          })
         }
         waitedCalls.delete(call.id)
       }

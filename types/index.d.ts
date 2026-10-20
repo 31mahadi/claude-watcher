@@ -8,13 +8,15 @@ export type WatchPhase =
   | 'error'
   | 'done'
 
-export type WatchTab = 'turn' | 'plan' | 'agents' | 'sessions' | 'health' | 'config'
+export type WatchTab = 'turn' | 'plan' | 'agents' | 'calls' | 'sessions' | 'health' | 'config'
 
 export type WatchCall = {
   id: string
   tool: string
   label: string
   key: string
+  // History key for the kind of step (tests, build, edit…), used when the exact command is new.
+  kindKey?: string
   startedAt: number
   durationMs?: number
   ok?: boolean
@@ -77,6 +79,10 @@ export type WatchSnapshot = {
   model?: string
   effort?: string
   phase: WatchPhase
+  // What the turn is for: the prompt's first line.
+  goal?: string
+  // Last tool start or end, for stall detection.
+  lastEventAt?: number
   turnStartedAt: number | null
   turnEndedAt: number | null
   current: WatchCall | null

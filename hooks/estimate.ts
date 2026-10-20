@@ -19,6 +19,22 @@ export function normalizeKey(tool: string, input: Record<string, unknown>, cwd: 
   return cfg.estimate.perProject ? `${cwd}::${body}` : body
 }
 
+// Coarse kind of step, so a new command still gets a typical duration.
+export function stepKind(tool: string, input: Record<string, unknown>): string {
+  if (tool === 'Bash' && typeof input.command === 'string') {
+    const c = input.command.toLowerCase()
+    if (/\b(test|jest|vitest|pytest|mocha|rspec|phpunit)\b/.test(c)) return 'bash:test'
+    if (/\b(lint|eslint|ruff|flake8|clippy|golangci|prettier --check|biome check)\b/.test(c)) return 'bash:lint'
+    if (/\b(npm|pnpm|yarn|bun|pip|poetry|cargo|go) (install|add|i|ci|sync|get)\b/.test(c)) return 'bash:install'
+    if (/\b(build|tsc|webpack|vite build|cargo build|go build|make)\b/.test(c)) return 'bash:build'
+    if (/^\s*git\b/.test(c)) return 'bash:git'
+    return 'bash:other'
+  }
+  if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(tool)) return 'edit'
+  if (/^(Read|Grep|Glob|LS)$/.test(tool)) return 'read'
+  return tool
+}
+
 export function globMatch(pattern: string, text: string): boolean {
   const re = new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`)
   return re.test(text.trim())

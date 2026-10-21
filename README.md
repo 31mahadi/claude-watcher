@@ -12,16 +12,18 @@ Claude Watcher only observes. Every hook passes the event on unchanged, and it n
 
 ## Install
 
+Requires Claude Code 2.1.304 or later.
+
 At the prompt of a terminal session:
 
 ```
-/plugin install watcher --marketplace <owner>/claude-watcher
+/plugin install watcher --marketplace 31mahadi/claude-watcher
 ```
 
 From a shell:
 
 ```
-claude plugin install watcher --marketplace <owner>/claude-watcher
+claude plugin install watcher --marketplace 31mahadi/claude-watcher
 ```
 
 To run it from a checkout:
@@ -135,3 +137,6 @@ Settings merge in this order, later layers winning: built-in defaults, then `<pr
 - The running indicator pulses on the terminal and the Desktop app; VS Code shows a still dot.
 - Test parsing is best effort and is labelled "parsed" in the Health tab.
 
+## License
+
+MIT. See [LICENSE](LICENSE).

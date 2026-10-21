@@ -87,7 +87,7 @@ view ▾   history ▾   actions… ▾
 - **Changes**: every file Claude edited this session with `+N −M`, from `git diff --numstat` against the commit the session started from; your own edits counted separately.
 - **Checks**: each test, lint and build command with its last five outcomes (`✗ ✗ ✓`), kept across `/clear` and resume.
 - **Context**: usage with a gauge and a forecast of turns left before compaction (`health.compactAtPct`, default 85).
-- **Idle**: when nothing runs, the status reads `Idle` and Now shows `Idle · last turn 2:11 · 16 calls · tests ✓ · 2 files`.
+- **Idle**: when nothing runs, the status reads `Idle` and Now shows `Idle · last turn took 2:11 · 16 calls · tests ✓ · 2 files`.
 - **Footer**: `view` switches between the dashboard and detail views, `history` filters history (all, turns, problems), `actions…` opens the plan file, the failing test at its line, or a changed file in VS Code (`code -g`; the path is copied when `code` isn't available), or copies the resume command; it also has `clear plan` and `clear history`.
 - **Badge**: the pane's tab reads `Watcher · 1` while something needs you.
 - **Any width**: the pane fits the terminal, the Desktop app and the VS Code side panel. Charts size to the pane; narrow panes drop secondary columns, and very narrow ones go compact.

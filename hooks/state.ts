@@ -117,6 +117,8 @@ export function agentStart(s: WatchSnapshot, id: string, type: string, now: numb
   return { ...s, agents: [...rest, { id, type, phase: 'running' as const, startedAt: now, toolCalls: 0 }].slice(-20) }
 }
 
+const LIST_GRACE_MS = 15_000
+
 export type AgentSeen = { id: string; label: string; status: string }
 
 // Merge the engine's agent list (polled each tick). Classic Subagent events can be
@@ -138,6 +140,14 @@ export function syncAgents(s: WatchSnapshot, seen: readonly AgentSeen[], now: nu
       agents = agents.map(x => (x.id === a.id ? { ...x, type: a.label, phase, endedAt: ended, current: ended ? undefined : x.current } : x))
       changed = true
     }
+  }
+  // Finished agents drop off the engine list, and their Stop event can be missed:
+  // a running agent no longer listed has ended. A fresh one may not be listed yet.
+  const listed = new Set(seen.map(a => a.id))
+  const gone = agents.filter(a => a.phase === 'running' && !listed.has(a.id) && now - a.startedAt >= LIST_GRACE_MS)
+  if (gone.length) {
+    agents = agents.map(a => (gone.includes(a) ? { ...a, phase: 'done' as const, endedAt: now, current: undefined } : a))
+    changed = true
   }
   return changed ? { ...s, agents: agents.slice(-20) } : s
 }

@@ -364,7 +364,8 @@ function StepList(v: View, plan: WatchPlan, live = true): unknown[] {
   steps.forEach((step, i) => {
     if (fold.has(i)) return
     const running = step.status === 'running'
-    const mark = step.status === 'done' ? '✓' : step.status === 'failed' ? '✗' : running ? '▶' : '○'
+    // Between turns nothing runs: the step that is up next keeps its colour but not the play mark.
+    const mark = step.status === 'done' ? '✓' : step.status === 'failed' ? '✗' : running && isActive(s) ? '▶' : '○'
     const markColor = step.status === 'done' ? STEP_COLOR.doneMark : step.status === 'failed' ? resolve('attention', k.cfg) : running ? STEP_COLOR.run : STEP_COLOR.wait
     const textColor = step.status === 'done' ? STEP_COLOR.done : step.status === 'failed' ? resolve('attention', k.cfg) : running ? STEP_COLOR.run : STEP_COLOR.wait
     // Steps marked done without being watched (ledger on load) have no real duration.
@@ -419,7 +420,7 @@ function NowBlock(v: View, compact: boolean): unknown[] {
     const ticket = plan.ticket && !plan.title.includes(plan.ticket) ? `${plan.ticket} · ` : ''
     const end = plan.endedAt ?? (active ? undefined : (s.turnEndedAt ?? undefined))
     const elapsed = `${clock(plan.startedAt)} → ${end ? clock(end) : 'now'} · ${span((end ?? now) - plan.startedAt)}`
-    const position = p.total ? (p.done === p.total ? `all ${p.total} steps done` : `step ${Math.min(p.total, p.done + 1)} of ${p.total}`) : undefined
+    const position = p.total ? (p.done === p.total ? `all ${p.total} steps done` : `step ${p.current ? plan.steps.indexOf(p.current) + 1 : Math.min(p.total, p.done + 1)} of ${p.total}`) : undefined
     const rows: unknown[] = [
       <Box key="goal" flexDirection="row" justifyContent="space-between" gap={1}>
         <Box flexDirection="row" gap={1} flexShrink={1}>
@@ -770,7 +771,7 @@ function IdleLine(v: View) {
   const last = turns[turns.length - 1]
   const left = last
     ? [
-        `Idle · last turn ${last.interrupted ? 'interrupted' : time(last.durationMs ?? 0, cfg.timeFormat)}`,
+        `Idle · last turn ${last.interrupted ? 'interrupted' : 'took ' + time(last.durationMs ?? 0, cfg.timeFormat)}`,
         `${last.calls.length + last.moreCalls} calls`,
         last.tests ? (last.tests.ok ? 'tests ✓' : 'tests ✗') : undefined,
         last.files.length ? `${last.files.length} file${last.files.length === 1 ? '' : 's'}` : undefined,

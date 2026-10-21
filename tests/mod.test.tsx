@@ -654,7 +654,7 @@ test('idle line after a finished turn; live sections absent', async ($, on) => {
   await $.turn.complete({ turnId: 't1', answer: '', durationMs: 2000, isAborted: false, reason: 'answer' } as never)
   for (const surface of DASH) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect(await ui.find({ text: /Idle · last turn 0:02 · 1 calls/ })).toBeDefined()
+    expect(await ui.find({ text: /Idle · last turn took 0:02 · 1 calls/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^PLAN$/ })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /^CHECKS$/ })).toBeUndefined()
     await ui.unmount()

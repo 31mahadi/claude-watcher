@@ -191,6 +191,14 @@ describe('reducers', () => {
     s = S.syncAgents(s, [{ id: 'a', label: 'Explore', status: 'completed' }], 40)
     expect(s.agents[0]).toMatchObject({ phase: 'done', startedAt: 10, endedAt: 40 })
   })
+  test('syncAgents ends a running agent the engine no longer lists', async () => {
+    let s = S.agentStart(S.EMPTY_SNAP, 'gone', 'Review', 0)
+    s = S.agentStart(s, 'new', 'Fresh', 50_000)
+    s = S.syncAgents(s, [], 60_000)
+    expect(s.agents.find(a => a.id === 'gone')).toMatchObject({ phase: 'done', endedAt: 60_000 })
+    // Just started: the engine may not list it yet.
+    expect(s.agents.find(a => a.id === 'new')?.phase).toBe('running')
+  })
 })
 
 describe('state upgrade', () => {

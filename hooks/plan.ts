@@ -119,6 +119,22 @@ function setRunning(steps: WatchPlanStep[], i: number, now: number): WatchPlanSt
 
 const normal = (t: string) => t.replace(/^Task\s+\d+:\s*/i, '').trim().toLowerCase()
 
+// A todo or task naming several steps ("Implement Tasks 1+2", "Tasks 1-3", "Task 1 and 2")
+// stands for each of them; otherwise it names one step as below.
+function matchSteps(steps: readonly WatchPlanStep[], text: string): number[] {
+  const list = /\bTasks?\s+(\d+(?:\s*(?:[+,&\-–]|and)\s*\d+)+)\b/i.exec(text)?.[1]
+  if (list) {
+    const nums = list.split(/\s*(?:[+,&]|and)\s*/i).flatMap(part => {
+      const [a, b] = part.split(/\s*[\-–]\s*/).map(Number)
+      return b !== undefined && b >= a! && b - a! < 50 ? Array.from({ length: b - a! + 1 }, (_, i) => a! + i) : [a!]
+    })
+    const found = nums.map(n => steps.findIndex(s => s.id === `task-${n}`)).filter(i => i >= 0)
+    if (found.length) return [...new Set(found)]
+  }
+  const i = matchStep(steps, text)
+  return i < 0 ? [] : [i]
+}
+
 // A todo or task names a step by "Task N:", by its exact title, or by a close prefix:
 // the shorter title is at least 60% of the longer and ends on a word boundary.
 function matchStep(steps: readonly WatchPlanStep[], text: string): number {
@@ -181,14 +197,14 @@ export function mergeTodos(plan: WatchPlan | null, todos: readonly Todo[], now: 
     let steps = plan.steps
     const extras: { title: string; done: boolean }[] = []
     for (const todo of items) {
-      const i = matchStep(steps, todo.content)
+      const idx = matchSteps(steps, todo.content)
       const status = todoStatus(todo.status)
-      if (i < 0) {
+      if (!idx.length) {
         extras.push({ title: todo.content, done: status === 'done' })
         continue
       }
-      if (status === 'running') steps = setRunning(steps, i, now)
-      else if (status === 'done') steps = steps.map((s, j) => (j === i ? withStatus(s, 'done', now) : s))
+      if (status === 'running') steps = setRunning(steps, idx[0]!, now)
+      else if (status === 'done') steps = steps.map((s, j) => (idx.includes(j) ? withStatus(s, 'done', now) : s))
     }
     if (steps.some(finished)) steps = advance(steps, now)
     const r = steps.findIndex(s => s.status === 'running')
@@ -219,10 +235,10 @@ export function mergeTodos(plan: WatchPlan | null, todos: readonly Todo[], now: 
 
 export function taskEvent(plan: WatchPlan | null, ev: { id: string; title: string; done: boolean }, now: number): WatchPlan {
   if (plan && isPersistent(plan)) {
-    const i = matchStep(plan.steps, ev.title)
-    if (i < 0) return plan
-    if (!ev.done) return { ...plan, steps: setRunning(plan.steps, i, now) }
-    return { ...plan, steps: advance(plan.steps.map((s, j) => (j === i ? withStatus(s, 'done', now) : s)), now) }
+    const idx = matchSteps(plan.steps, ev.title)
+    if (!idx.length) return plan
+    if (!ev.done) return { ...plan, steps: setRunning(plan.steps, idx[0]!, now) }
+    return { ...plan, steps: advance(plan.steps.map((s, j) => (idx.includes(j) ? withStatus(s, 'done', now) : s)), now) }
   }
   const base: WatchPlan = plan && plan.source === 'task' ? plan : { source: 'task', title: plan?.title ?? 'Tasks', ticket: plan?.ticket, steps: [], startedAt: plan?.startedAt ?? now }
   const id = `task:${ev.id}`

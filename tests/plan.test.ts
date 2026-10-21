@@ -73,6 +73,18 @@ describe('plan model', () => {
     expect(m.steps.map(s => s.status)).toEqual(['done', 'running'])
   })
 
+  test('a task naming several steps ("Tasks 1+2") finishes each of them', async () => {
+    const p = planFromFile(parsePlanFile(SAMPLE)!, { path: FILE, source: 'file', done: new Set(), now: 0 })
+    let m = taskEvent(p, { id: 'x', title: 'Implement Tasks 1+2 resolver', done: false }, 2)
+    expect(m.steps[0]!.status).toBe('running')
+    m = taskEvent(m, { id: 'x', title: 'Implement Tasks 1+2 resolver', done: true }, 5)
+    expect(m.steps.map(s => s.status)).toEqual(['done', 'done'])
+    for (const title of ['Tasks 1-2', 'Tasks 1, 2', 'Task 1 and 2', 'Tasks 1 & 2']) {
+      const t = mergeTodos(p, [{ content: title, status: 'completed' }], 4)
+      expect(t.steps.map(s => s.status)).toEqual(['done', 'done'])
+    }
+  })
+
   test('mergeTodos without a plan builds a todo plan', async () => {
     const m = mergeTodos(null, [{ content: 'A', status: 'completed' }, { content: 'B', status: 'in_progress' }], 5)
     expect(m.source).toBe('todo')

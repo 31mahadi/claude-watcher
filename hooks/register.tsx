@@ -321,9 +321,10 @@ async function tickOnce($: $) {
   }
   const active = s.turnStartedAt !== null && s.turnEndedAt === null
   const now = await $.clock.now()
-  const listed = await $.agent.list().catch(() => [])
-  const seen = listed.map(a => ({ id: a.id, label: a.description || a.name || a.type, status: a.status }))
-  if (seen.length) {
+  const listed = await $.agent.list().catch(() => null)
+  const seen = (listed ?? []).map(a => ({ id: a.id, label: a.description || a.name || a.type, status: a.status }))
+  // An empty list is news too (every agent finished); a failed call is not.
+  if (listed && (seen.length || s.agents.some(a => a.phase === 'running'))) {
     await update($, snap, x => {
       const before = new Set(x.agents.map(a => a.id))
       const y = S.syncAgents(x, seen, now)

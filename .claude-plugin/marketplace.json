@@ -1,5 +1,13 @@
 {
   "name": "claude-watcher",
-  "owner": { "name": "Mahadi" },
-  "plugins": [{ "name": "watcher", "source": "./" }]
+  "description": "Watcher: a live dashboard of what Claude Code is doing.",
+  "owner": {
+    "name": "Mahadi"
+  },
+  "plugins": [
+    {
+      "name": "watcher",
+      "source": "./"
+    }
+  ]
 }

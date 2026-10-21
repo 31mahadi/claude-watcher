@@ -2,5 +2,11 @@
   "name": "watcher",
   "version": "0.12.0",
   "description": "Live dashboard of what Claude is doing: turn, plan, agents, sessions and health.",
+  "author": {
+    "name": "Mahadi",
+    "url": "https://github.com/31mahadi"
+  },
+  "homepage": "https://github.com/31mahadi/claude-watcher",
+  "license": "MIT",
   "types": "./types/index.d.ts"
 }

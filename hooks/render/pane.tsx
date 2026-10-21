@@ -130,7 +130,7 @@ function UsageBar(v: View) {
   const { k, s, now } = v
   const { Box, Text } = k.els
   const limits = s.health.limits ?? []
-  if (limits.length === 0) return null
+  if (limits.length === 0) return Section(k, 'usage', 'USAGE', [<Text key="usage-wait" dimColor>waiting for the first usage update…</Text>])
   const order = (kind: string) => (kind === 'five_hour' ? 0 : kind === 'seven_day' ? 1 : 2)
   const rows = [...limits]
     .sort((a, b) => order(a.kind) - order(b.kind))
@@ -150,6 +150,52 @@ function UsageBar(v: View) {
   return Section(k, 'usage', 'USAGE', rows)
 }
 
+// STATUS: one glance at what Claude is doing right now, then each running agent.
+function StatusBlock(v: View) {
+  const { k, s, now } = v
+  const { Box, Text } = k.els
+  const sem = phaseSem(s.phase)
+  const active = isActive(s)
+  const what =
+    s.phase === 'tool' && s.current
+      ? `${s.current.label} · ${span(now - s.current.startedAt)}`
+      : s.phase === 'thinking' && s.turnStartedAt !== null
+        ? `${span(now - s.turnStartedAt)} into the turn`
+        : s.health.needsYou
+          ? needsYouText(s, now)
+          : undefined
+  const rows: unknown[] = [
+    <Box key="status-line" flexDirection="row" gap={1}>
+      {active ? Pulse(k, sem, 'status-pulse') : Mark(k, '●', sem)}
+      <Text key="status-phase" bold color={resolve(sem, k.cfg)}>{PHASE_LABEL[s.phase]}</Text>
+      {what ? <Text dimColor wrap="truncate-end">{what}</Text> : null}
+    </Box>,
+  ]
+  for (const a of s.agents.filter(x => x.phase === 'running')) {
+    rows.push(
+      <Box key={`status-agent-${a.id}`} flexDirection="row" gap={1}>
+        <Text color={resolve('accent', k.cfg)}>{'  ↳'}</Text>
+        <Text key={`status-agent-type-${a.id}`} bold>{a.type}</Text>
+        <Text dimColor wrap="truncate-end">{`${a.current ?? 'thinking'} · ${span(now - a.startedAt)}`}</Text>
+      </Box>,
+    )
+  }
+  return (
+    <Box key="status" flexDirection="column" borderStyle="round" borderColor={STATE_HEX[sem]} paddingX={1}>
+      {rows}
+    </Box>
+  )
+}
+
+function UsageBlock(v: View) {
+  const { Box } = v.k.els
+  return (
+    <Box key="usage-block" flexDirection="column" borderStyle="round" borderColor={resolve('dim', v.k.cfg)} paddingX={1}>
+      {UsageBar(v)}
+    </Box>
+  )
+}
+
 export function Pane(v: View) {
   const { Box } = v.k.els
   const gap = v.k.cfg.theme === 'dense' ? 0 : 1
@@ -159,7 +205,8 @@ export function Pane(v: View) {
     const compact = v.k.cfg.compact || v.k.columns < COMPACT_BELOW
     return (
       <Box flexDirection="column" height={v.k.rows}>
-        {UsageBar(v)}
+        {UsageBlock(v)}
+        {StatusBlock(v)}
         <Box key="now" flexDirection="column" gap={gap} borderStyle="round" borderColor={STATE_HEX[nowSem(v)]} paddingX={1}>
           {NowBlock(v, compact)}
         </Box>
@@ -193,7 +240,7 @@ export function Pane(v: View) {
                     : ConfigDetail(v)
   return (
     <Box flexDirection="column" gap={gap}>
-      {UsageBar(v)}
+      {UsageBlock(v)}
       {detail}
       {Footer(v)}
     </Box>

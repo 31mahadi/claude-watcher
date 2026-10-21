@@ -256,10 +256,10 @@ export function Mark(k: Kit, glyph: string, sem: Semantic) {
 }
 
 // The one motion: a Client pulse where the surface has Client, a still dot elsewhere.
-export function Pulse(k: Kit, sem: Semantic) {
+export function Pulse(k: Kit, sem: Semantic, key = 'pulse') {
   const { Client, Text } = k.els
   // Client runs on the terminal and Desktop only; VS Code gets a still dot.
-  if (k.cfg.animations && Client && (k.surface === 'terminal' || k.surface === 'desktop')) return <Client key="pulse" module="../client/pulse.ts" props={{ color: resolve(sem, k.cfg) }} width={1} />
+  if (k.cfg.animations && Client && (k.surface === 'terminal' || k.surface === 'desktop')) return <Client key={key} module="../client/pulse.ts" props={{ color: resolve(sem, k.cfg) }} width={1} />
   return <Text color={resolve(sem, k.cfg)}>●</Text>
 }
 

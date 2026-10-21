@@ -641,10 +641,9 @@ function HistoryGlance(v: View) {
   const picker = Select ? (
     <Select
       key="turn-pick"
-      label="turn"
       value=""
       options={[
-        { value: '', label: 'open turn…' },
+        { value: '', label: '▸ open a past turn…' },
         collapsed ? { value: 'expand', label: 'expand history' } : { value: 'collapse', label: 'collapse history' },
         ...shown.map(t => ({ value: t.id, label: `Turn ${number.get(t.id)} · ${t.title.slice(0, 40)}` })),
         ...(more ? [{ value: 'more', label: `load ${Math.min(HISTORY_PAGE, turns.length - shown.length)} more (${turns.length - shown.length} older)` }] : []),
@@ -652,13 +651,19 @@ function HistoryGlance(v: View) {
       onSelect={(value: string) => v.actions.turnPick(value)}
     />
   ) : null
+  // Its own accent-bordered box so the picker reads as a control, not a label.
+  const pickerBox = picker ? (
+    <Box key="turn-pick-box" borderStyle="round" borderColor={resolve('accent', k.cfg)} paddingX={1} width={30} flexShrink={1}>
+      {picker}
+    </Box>
+  ) : null
   return (
     <Box key="history" flexDirection="column">
       <Box flexDirection="row" gap={2} alignItems="center" flexWrap="wrap">
         <Text dimColor bold>HISTORY</Text>
         <Button key="history-toggle" plain label={collapsed ? `▸ show ${all.length} turn${all.length === 1 ? '' : 's'}` : '▾ hide'} onPress={() => v.actions.toggleHistory()} />
         {collapsed ? null : strip}
-        {picker}
+        {pickerBox}
         <Box flexGrow={1} />
         <Button key="history-clear" plain label="✕ clear" onPress={() => v.actions.clearHistory()} />
       </Box>

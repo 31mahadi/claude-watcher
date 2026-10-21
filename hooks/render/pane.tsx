@@ -615,6 +615,9 @@ function TurnCard(v: View, t: WatchHistoryTurn, n: number) {
   )
 }
 
+// Turn cards shown at first and added per "load more".
+export const HISTORY_PAGE = 3
+
 function HistoryGlance(v: View) {
   const { k, s } = v
   const { Box, Text, Select, Button } = k.els
@@ -623,7 +626,7 @@ function HistoryGlance(v: View) {
   if (all.length === 0) return null
   const filter = v.ui.historyFilter ?? 'all'
   const turns = filterHistory(all, filter).filter((e): e is WatchHistoryTurn => e.kind === 'turn')
-  const limit = v.ui.historyLimit ?? 10
+  const limit = v.ui.historyLimit ?? HISTORY_PAGE
   const shown = turns.slice().reverse().slice(0, limit)
   const number = new Map(all.map((t, i) => [t.id, i + 1]))
   const ended = all.filter(t => t.ended).slice(-30)
@@ -644,7 +647,7 @@ function HistoryGlance(v: View) {
         { value: '', label: 'open turn…' },
         collapsed ? { value: 'expand', label: 'expand history' } : { value: 'collapse', label: 'collapse history' },
         ...shown.map(t => ({ value: t.id, label: `Turn ${number.get(t.id)} · ${t.title.slice(0, 40)}` })),
-        ...(more ? [{ value: 'more', label: `show 10 more (${turns.length - shown.length} older)` }] : []),
+        ...(more ? [{ value: 'more', label: `load ${Math.min(HISTORY_PAGE, turns.length - shown.length)} more (${turns.length - shown.length} older)` }] : []),
       ]}
       onSelect={(value: string) => v.actions.turnPick(value)}
     />
@@ -665,7 +668,13 @@ function HistoryGlance(v: View) {
         {rows}
       </Box>
       {rows.length === 0 ? <Text dimColor>{filter === 'problems' ? 'No problem turns.' : 'Nothing yet.'}</Text> : null}
-      {more && !Select ? <Text dimColor>{`+${turns.length - shown.length} older · /watch history`}</Text> : null}
+      {more || shown.length > HISTORY_PAGE ? (
+        <Box key="history-paging" flexDirection="row" gap={2}>
+          {more && Button ? <Button key="history-more" plain label={`↓ load ${Math.min(HISTORY_PAGE, turns.length - shown.length)} more · ${turns.length - shown.length} older`} onPress={() => v.actions.turnPick('more')} /> : null}
+          {shown.length > HISTORY_PAGE && Button ? <Button key="history-less" plain label="↑ show less" onPress={() => v.actions.turnPick('less')} /> : null}
+          {more && !Button ? <Text dimColor>{`+${turns.length - shown.length} older · /watch history`}</Text> : null}
+        </Box>
+      ) : null}
         </>
       )}
     </Box>

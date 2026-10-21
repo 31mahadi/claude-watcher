@@ -106,7 +106,7 @@ With a plan file active, todos are matched to its tasks by title; extra todos be
 
 Every tool call, edited file, test result and subagent is credited to the step running at that moment.
 
-- **History** (pinned at the bottom): every turn of the session, newest first, as a card: time `start → end`, prompt, duration, steps moved, calls, tests, files and agents. `▾ hide` / `▸ show N turns` collapses it, `✕ clear` empties it, and `open turn…` replays a past turn as the dashboard looked when it ended, with a `← dashboard` button to return. Compactions, model switches, stop errors and plan loads appear between turns. The last 20 turns are kept per session and survive `/clear` and resume.
+- **History** (pinned at the bottom): every turn of the session, newest first, as a card: time `start → end`, prompt, duration, steps moved, calls, tests, files and agents. The latest 3 turns show; `↓ load 3 more` adds older ones and `↑ show less` goes back. `▾ hide` / `▸ show N turns` collapses it, `✕ clear` empties it, and `open turn…` replays a past turn as the dashboard looked when it ended, with a `← dashboard` button to return. Compactions, model switches, stop errors and plan loads appear between turns. The last 20 turns are kept per session and survive `/clear` and resume.
 
 Detail views: `/watch plan` (every step with its calls, files, tests and failure output), `/watch agents`, `/watch calls`, `/watch history` (every turn expanded), `/watch sessions`, `/watch health`, `/watch config`.
 

@@ -6,7 +6,7 @@ import { DEFAULTS, deepMergeRaw, getPath, mergeConfig, parseValue, patchFor } fr
 import { normalizeKey, remember, stepKind } from './estimate'
 import { parseDuration, time, toolLabel, truncate } from './format'
 import { classifyCommand, parseGitStatus, parseTestOutput } from './health'
-import { needsYouText, Pane, shortModel, summary, TABS, type View } from './render/pane'
+import { HISTORY_PAGE, needsYouText, Pane, shortModel, summary, TABS, type View } from './render/pane'
 import type { Kit } from './render/widgets'
 import { heartbeatOf } from './sessions'
 import { attribute, isPersistent, isPlanPath, ledgerPath, mergeTodos, parseLedger, parsePlanFile, planFromFile, promptPlan, settle, taskEvent } from './plan'
@@ -942,7 +942,9 @@ export const register: Register = on => {
         turnPick: value =>
           void update($, ui, (u): WatchUi =>
             value === 'more'
-              ? { ...u, historyLimit: (u.historyLimit ?? 10) + 10 }
+              ? { ...u, historyLimit: (u.historyLimit ?? HISTORY_PAGE) + HISTORY_PAGE }
+              : value === 'less'
+              ? { ...u, historyLimit: HISTORY_PAGE }
               : value === 'collapse' || value === 'expand'
                 ? { ...u, historyCollapsed: value === 'collapse' }
                 : value

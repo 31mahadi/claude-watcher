@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
+import * as U from '../hooks/update'
 
 import { DEFAULTS, mergeConfig, parseValue, patchFor } from '../hooks/config'
 import { estimateMs, globMatch, median, normalizeKey, record, remember, stepKind } from '../hooks/estimate'
@@ -210,5 +211,20 @@ describe('state upgrade', () => {
     expect(s.plan).toBeNull()
     expect(s.history).toEqual([])
     expect(s.health.contextHistory).toEqual([])
+  })
+})
+
+describe('update notice', () => {
+  test('isNewer compares x.y.z and ignores what it cannot parse', async () => {
+    expect(U.isNewer('v0.12.3', '0.12.2')).toBe(true)
+    expect(U.isNewer('v0.13.0', '0.12.9')).toBe(true)
+    expect(U.isNewer('v0.12.2', '0.12.2')).toBe(false)
+    expect(U.isNewer('v0.11.9', '0.12.0')).toBe(false)
+    expect(U.isNewer('nightly', '0.12.0')).toBe(false)
+  })
+  test('latestTag reads tag_name from the API body', async () => {
+    expect(U.latestTag('{"tag_name":"v0.12.2"}')).toBe('v0.12.2')
+    expect(U.latestTag('not json')).toBeUndefined()
+    expect(U.latestTag('{"message":"Not Found"}')).toBeUndefined()
   })
 })

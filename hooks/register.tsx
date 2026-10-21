@@ -15,6 +15,7 @@ import { checkKey, checkRows, recordCheck } from './checks'
 import * as H from './history'
 import { failingLocation, openOptions } from './openmenu'
 import * as S from './state'
+import * as U from './update'
 
 const snap = atom({ plugin: 'watcher', key: 'snap' } as const, S.EMPTY_SNAP)
 const config = atom({ plugin: 'watcher', key: 'config' } as const, DEFAULTS)
@@ -304,6 +305,25 @@ async function guard(what: string, $: $, fn: () => Promise<unknown>) {
   }
 }
 
+// Once a day, ask GitHub for the latest release; toast once per new version.
+async function checkUpdate($: $) {
+  const now = await $.clock.now()
+  const checkedAt = Number((await $.store.get('updateCheckedAt')) ?? 0)
+  let latest = (await $.store.get('updateLatest')) as string | undefined
+  if (now - checkedAt >= U.CHECK_EVERY_MS) {
+    await $.store.set('updateCheckedAt', now)
+    const res = await $.http.fetch(U.RELEASES_URL, { headers: { accept: 'application/vnd.github+json' } })
+    if (res.ok) latest = U.latestTag(res.text) ?? latest
+    if (latest) await $.store.set('updateLatest', latest)
+  }
+  if (!latest) return
+  const manifest = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: string }
+  if (!manifest.version || !U.isNewer(latest, manifest.version)) return
+  if ((await $.store.get('updateNotified')) === latest) return
+  await $.store.set('updateNotified', latest)
+  $.ui.toast(`Claude Watcher ${latest} is out (you have ${manifest.version}): ${U.UPDATE_HINT}`)
+}
+
 async function isPaneOpen($: $) {
   return (await $.ui.panes()).some(p => p.id === S.PANE)
 }
@@ -489,6 +509,7 @@ export const register: Register = on => {
       await beat($)
       installTicker($)
       if (await isPaneOpen($)) startTicker($)
+      await checkUpdate($).catch(() => undefined)
     })
     return result
   })

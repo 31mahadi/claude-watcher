@@ -28,6 +28,17 @@ From a shell:
 claude plugin install watcher --marketplace 31mahadi/claude-watcher
 ```
 
+## Updating
+
+Watcher checks for a new release once a day and shows a toast when one is out. To update:
+
+```
+/plugin marketplace update claude-watcher
+/plugin update watcher@claude-watcher
+```
+
+Then restart Claude Code. To get new versions without asking, open `/plugin`, go to **Marketplaces**, select `claude-watcher` and turn on auto-update.
+
 To run it from a checkout:
 
 ```

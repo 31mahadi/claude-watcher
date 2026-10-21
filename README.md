@@ -10,6 +10,8 @@ A Claude Code mod that shows what Claude is doing in one place: the current turn
 
 Claude Watcher only observes. Every hook passes the event on unchanged, and it never blocks or denies anything.
 
+![Watcher pane in VS Code: usage, status, now and history](assets/screenshot.png)
+
 ## Install
 
 Requires Claude Code 2.1.304 or later.

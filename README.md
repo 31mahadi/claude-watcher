@@ -137,6 +137,15 @@ Settings merge in this order, later layers winning: built-in defaults, then `<pr
 - The running indicator pulses on the terminal and the Desktop app; VS Code shows a still dot.
 - Test parsing is best effort and is labelled "parsed" in the Health tab.
 
+## Development
+
+Run from a checkout with Claude Code 2.1.304 or later:
+
+```
+claude plugin validate .
+claude plugin test .
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -49,32 +49,44 @@ claude --plugin-dir ./claude-watcher
 One pane you can leave open all day. It answers, at a glance: does anything need me, which step of the plan is Claude on, what has it changed, did its checks pass, and how long until context compaction.
 
 ```
-PLAN     CAM-77 · Migrate auth                     3 / 13 · ~8m   12:40
-         ━━━━━━━━░░░░░░░░░░░░░░░░░░░░ 23%
-         ▶ Company facts (data layer)                              2:12
-           running  npm test · 0:41 · usually ~1:30
-           next     Add the fields · 2 of 5 done
-           tests    ✗ 2 failed
-           files    login.ts · 14 calls
-CHANGES  src/login.ts                      +42 −7     turn 3
-         1 files · +42 −7
-CHECKS   npm test                ✗ ✗ ✓         41s ago · 9 passed
-CONTEXT  57% ━━━━━━┃━━░░  ~6 turns to compaction · +4%/turn
-HISTORY  20:32 ✗ Turn 4 · fix failing test · 2:11 · 16 calls · tests ✗
-─────────────────────────────────────────────────────────────────
-view ▾   history ▾   open… ▾
+╭ USAGE ──────────────────────────────────────────────╮
+│ session  ━━━━━──────────  24%  resets in 2h 5m      │
+│ weekly   ━━━━━━━━───────  41%  resets Sat           │
+╰─────────────────────────────────────────────────────╯
+╭ STATUS ─────────────────────────────────────────────╮
+│ ● Running  Bash npm test · 0:41                     │
+│   ↳ Explore  Read src/login.ts · 0:07               │
+╰─────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────╮
+│ PLAN  CAM-77 · Migrate auth      step 3 of 7 · ~8m  │
+│       ▰▰▰▱▱▱▱                               2 done  │
+│       ✓ Read existing auth code                1m   │
+│       ✓ Write the failing test                 2m   │
+│       ▶ Rewrite login handler                       │
+│       ○ Update docs                                 │
+│ NOW   main     ━━━━━━━━━━━━━                        │
+│       Explore      ━━━━━                            │
+│       tests ✗   files changed +42 −7   context 57%  │
+╰─────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────╮
+│ HISTORY  ▾ hide  ▂▅▃█  open turn… ▾        ✕ clear  │
+│ ✓ Turn 2  fix failing test   20:30 → 20:32 · 2m 11s │
+╰─────────────────────────────────────────────────────╯
+view ▾   history ▾   actions… ▾
 ```
 
-- **Attention** (top, only when needed, the only coloured card): a permission prompt or question, failing tests with the failure output and their step, a stop error, or a stall.
-- **Plan**: ticket and title, progress and time left, done steps, the running step with its live command, next sub-step, test result and files, then the next two steps.
+- **Usage** (always on top): every usage window the session reports, as `/usage` shows them: session (5-hour), weekly, and per-model weekly windows. Each has a bar, the percent and when it resets. Amber from 70%, red from 90%.
+- **Status**: what Claude is doing right now (Thinking, Running with the current command and its timer, Needs you, Idle), then one line per running subagent with what it is doing.
+- **Attention** (only when needed): a permission prompt or question, failing tests with the failure output and their step, a stop error, or a stall.
+- **Plan**: ticket and title, progress and time left, then every step in order: done ✓, running ▶ with its live command, waiting ○. Only plans of more than 20 steps fold their done steps.
+- **Now**: one timeline for the main loop and every subagent, frozen once the turn ends; a live tree of the current turn; chips for tests, changed files and context.
 - **Changes**: every file Claude edited this session with `+N −M`, from `git diff --numstat` against the commit the session started from; your own edits counted separately.
 - **Checks**: each test, lint and build command with its last five outcomes (`✗ ✗ ✓`), kept across `/clear` and resume.
-- **Context**: usage with a gauge and a forecast of turns left before compaction, from the per-turn burn since the last compaction (`health.compactAtPct`, default 85).
-- **Agents**: one swimlane chart for the main loop and every subagent.
-- **History**: one line per turn and session event, newest first.
-- **Idle**: when nothing runs, everything above collapses to one line, `Idle · last turn 2:11 · 16 calls · tests ✓ · 2 files`, plus history.
+- **Context**: usage with a gauge and a forecast of turns left before compaction (`health.compactAtPct`, default 85).
+- **Idle**: when nothing runs, the status reads `Idle` and Now shows `Idle · last turn 2:11 · 16 calls · tests ✓ · 2 files`.
 - **Footer**: `view` switches between the dashboard and detail views, `history` filters history (all, turns, problems), `actions…` opens the plan file, the failing test at its line, or a changed file in VS Code (`code -g`; the path is copied when `code` isn't available), or copies the resume command; it also has `clear plan` and `clear history`.
 - **Badge**: the pane's tab reads `Watcher · 1` while something needs you.
+- **Any width**: the pane fits the terminal, the Desktop app and the VS Code side panel. Charts size to the pane; narrow panes drop secondary columns, and very narrow ones go compact.
 
 When every step of a plan is done it shows `✓ all N steps done`, history records `plan finished`, and the plan clears itself when the next turn starts.
 
@@ -94,7 +106,7 @@ With a plan file active, todos are matched to its tasks by title; extra todos be
 
 Every tool call, edited file, test result and subagent is credited to the step running at that moment.
 
-- **History** (pinned at the bottom): every turn of the session, newest first, as one collapsed row each — time, prompt, duration, calls, tests, files, permission waits. Press a row to expand it: steps it moved, its calls with times and ✓/✗, files edited, test result with failure output, agents. Compactions, model switches, stop errors and plan loads appear between turns. A filter cycles `all` → `turns` → `problems`, and `[clear]` empties it. The last 20 turns are kept per session and survive `/clear` and resume.
+- **History** (pinned at the bottom): every turn of the session, newest first, as a card: time `start → end`, prompt, duration, steps moved, calls, tests, files and agents. `▾ hide` / `▸ show N turns` collapses it, `✕ clear` empties it, and `open turn…` replays a past turn as the dashboard looked when it ended, with a `← dashboard` button to return. Compactions, model switches, stop errors and plan loads appear between turns. The last 20 turns are kept per session and survive `/clear` and resume.
 
 Detail views: `/watch plan` (every step with its calls, files, tests and failure output), `/watch agents`, `/watch calls`, `/watch history` (every turn expanded), `/watch sessions`, `/watch health`, `/watch config`.
 
@@ -116,33 +128,10 @@ Settings merge in this order, later layers winning: built-in defaults, then `<pr
 }
 ```
 
-## Compared with other progress mods
-
-| | Watcher | progress-board | claude-task-progress | progress-tracker | session-progress | task-progress | ccmonitor |
-|---|---|---|---|---|---|---|---|
-| Turn / tool progress | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Plan / tasks | ✓ | ✓ | ✓ | | | ✓ | |
-| Subagent lanes | ✓ | ✓ | | | | | |
-| Multi-session board | ✓ | | | | | ✓ | ✓ |
-| Health (tests, git, context, errors, cost) | ✓ | | | | | | |
-| Svg / Raster visuals | ✓ | | | | | | |
-| Settings UI | ✓ | | | | | | |
-| "Needs you" band + notification | ✓ | | | ✓ | | | |
-
-This table is based on short descriptions of each mod, not a hands-on check. Verify it before you publish it.
-
 ## Limits
 
 - Mods cannot read window focus, so `desktopNotify: "whenUnfocused"` behaves like `"always"`.
 - Desktop notifications go through your own Claude Code notification channel. `attention.sound` is honoured only when that channel is the terminal bell.
-- The running indicator is a glyph that changes on a 1-second tick. There is no `Client` animation.
+- The running indicator pulses on the terminal and the Desktop app; VS Code shows a still dot.
 - Test parsing is best effort and is labelled "parsed" in the Health tab.
 
-## Development
-
-```
-claude plugin validate .
-claude plugin test .
-```
-
-The plugin API is early access. `NOTES.md` lists the events and calls this mod uses.

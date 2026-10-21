@@ -28,21 +28,55 @@ From a shell:
 claude plugin install watcher --marketplace 31mahadi/claude-watcher
 ```
 
+To run it from a checkout:
+
+```
+claude --plugin-dir ./claude-watcher
+```
+
 ## Updating
 
-Watcher checks for a new release once a day and shows a toast when one is out. To update:
+Watcher checks GitHub for a new release once a day. When one is out, it shows a toast once with the version and the update commands. The check sends no data and stays quiet when you are offline.
+
+### Update by hand
+
+At the prompt of a terminal session:
 
 ```
 /plugin marketplace update claude-watcher
 /plugin update watcher@claude-watcher
 ```
 
-Then restart Claude Code. To get new versions without asking, open `/plugin`, go to **Marketplaces**, select `claude-watcher` and turn on auto-update.
-
-To run it from a checkout:
+From a shell:
 
 ```
-claude --plugin-dir ./claude-watcher
+claude plugin marketplace update claude-watcher
+claude plugin update watcher@claude-watcher
+```
+
+Restart Claude Code afterwards so the new version loads.
+
+### Update automatically
+
+Auto-update is off by default for marketplaces outside Anthropic. To turn it on:
+
+1. Run `/plugin`.
+2. Open **Marketplaces** and select `claude-watcher`.
+3. Turn on **auto-update**.
+
+Claude Code then fetches new versions when it starts.
+
+### Check your version
+
+Run `/plugin`, open **Installed** and find `watcher`. The latest version is on the [releases page](https://github.com/31mahadi/claude-watcher/releases).
+
+### If the update does not take
+
+Reinstall the plugin:
+
+```
+/plugin uninstall watcher@claude-watcher
+/plugin install watcher --marketplace 31mahadi/claude-watcher
 ```
 
 ## Commands
